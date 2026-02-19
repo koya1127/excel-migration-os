@@ -23,3 +23,6 @@ out/
 # Env files
 .env
 .env.*
+
+# Google OAuth secrets
+credentials/
