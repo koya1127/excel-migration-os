@@ -97,22 +97,23 @@ def count_external_links(workbook) -> int:
 
 def analyze_openxml_file(file_path: Path, has_macro: bool, vba_module_count: int) -> FileReport:
     workbook = load_workbook(filename=file_path, data_only=False, keep_vba=True)
+    try:
+        formula_count = 0
+        volatile_formula_count = 0
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=False):
+                for cell in row:
+                    value = cell.value
+                    if isinstance(value, str) and value.startswith("="):
+                        formula_count += 1
+                        upper_formula = value.upper()
+                        if any(fn in upper_formula for fn in VOLATILE_FUNCTIONS):
+                            volatile_formula_count += 1
 
-    formula_count = 0
-    volatile_formula_count = 0
-    for sheet in workbook.worksheets:
-        for row in sheet.iter_rows(values_only=False):
-            for cell in row:
-                value = cell.value
-                if isinstance(value, str) and value.startswith("="):
-                    formula_count += 1
-                    upper_formula = value.upper()
-                    if any(fn in upper_formula for fn in VOLATILE_FUNCTIONS):
-                        volatile_formula_count += 1
-
-    named_range_count = len(workbook.defined_names.definedName)
-    external_link_count = count_external_links(workbook)
-    workbook.close()
+        named_range_count = len(workbook.defined_names)
+        external_link_count = count_external_links(workbook)
+    finally:
+        workbook.close()
 
     risk_score = 0
     notes = []
