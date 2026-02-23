@@ -27,6 +27,40 @@ Outputs:
 - `out/report.json`
 - `out/report.csv`
 
+## Extract command
+Extract VBA modules from `.xlsm` files as `.bas` source files.
+
+```bash
+# Single file
+python src/main.py extract --input "path/to/file.xlsm" --output "./out/extract"
+
+# Folder (recursive)
+python src/main.py extract --input "path/to/folder" --output "./out/extract"
+```
+
+Outputs:
+- `out/extract/extract_report.json`
+- `out/extract/extract_report.csv`
+- `out/extract/<filename>/Module1.bas`, `Sheet1.bas`, etc.
+
+## Convert command
+Convert extracted VBA modules (`.bas`) to Google Apps Script (`.gs`) using Claude API.
+
+```bash
+# Convert all .bas files under the extract output
+python src/main.py convert --input "./out/extract" --output "./out/convert"
+
+# With explicit API key and model
+python src/main.py convert --input "./out/extract" --output "./out/convert" --api-key "sk-..." --model "claude-sonnet-4-6"
+```
+
+Set `ANTHROPIC_API_KEY` environment variable to skip `--api-key`.
+
+Outputs:
+- `out/convert/convert_report.json`
+- `out/convert/convert_report.csv`
+- `out/convert/<workbook_name>/Module1.gs`, `Sheet1.gs`, etc.
+
 ## Drive upload command
 1. Create OAuth Desktop credentials in Google Cloud Console.
 2. Download the client JSON.
@@ -50,6 +84,36 @@ Outputs:
 - `out/upload_report.json`
 - `out/upload_report.csv`
 
+## Deploy command
+Deploy converted `.gs` files to a Google Spreadsheet as a container-bound Apps Script project.
+
+**Prerequisites:**
+- Enable **Apps Script API** in Google Cloud Console.
+- OAuth client must include the `script.projects` scope (re-auth runs automatically on first use).
+
+```bash
+# Deploy to an existing spreadsheet (creates a new script project)
+python src/main.py deploy \
+  --input "./out/convert-textvba" \
+  --spreadsheet-id "YOUR_SPREADSHEET_ID"
+
+# Deploy to an existing script project
+python src/main.py deploy \
+  --input "./out/convert-textvba" \
+  --spreadsheet-id "YOUR_SPREADSHEET_ID" \
+  --script-id "EXISTING_SCRIPT_PROJECT_ID"
+```
+
+Options:
+- `--input` (required): folder containing `.gs` files.
+- `--spreadsheet-id` (required): target Google Spreadsheet ID.
+- `--script-id` (optional): existing Apps Script project ID. Omit to create a new project.
+- `--credentials` (default: `credentials/client_secret.json`): OAuth client secret.
+- `--token` (default: `credentials/token.json`): OAuth token cache.
+
+Outputs:
+- `<input>/deploy_report.json`
+
 ## Notes
 - `.xls` deep parsing is limited in this MVP (metadata + extension-based risk).
-- VBA code conversion is not included yet; this stage is inventory + upload.
+- VBA → Apps Script conversion uses Claude API (requires `ANTHROPIC_API_KEY`).
