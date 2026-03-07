@@ -279,19 +279,19 @@ def analyze_openxml_file(file_path: Path, has_macro: bool, vba_module_count: int
     notes = []
     if has_macro:
         risk_score += 40
-        notes.append("Macro enabled")
+        notes.append("マクロ有り")
     if volatile_formula_count > 0:
         risk_score += 15
-        notes.append("Volatile formulas detected")
+        notes.append("揮発性の数式あり")
     if external_link_count > 0:
         risk_score += 20
-        notes.append("External links detected")
+        notes.append("外部リンクあり")
     if formula_count > 10000:
         risk_score += 10
-        notes.append("Large formula count")
+        notes.append("数式が多い")
     if incompatible_funcs_found:
         risk_score += 25
-        notes.append(f"Incompatible functions: {', '.join(sorted(incompatible_funcs_found))}")
+        notes.append(f"非互換関数: {', '.join(sorted(incompatible_funcs_found))}")
 
     stat = file_path.stat()
     modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
@@ -310,7 +310,7 @@ def analyze_openxml_file(file_path: Path, has_macro: bool, vba_module_count: int
         external_link_count=external_link_count,
         incompatible_function_count=len(incompatible_funcs_found),
         risk_score=min(risk_score, 100),
-        notes="; ".join(notes) if notes else "Low risk",
+        notes="; ".join(notes) if notes else "リスク低",
     )
 
 
@@ -319,10 +319,10 @@ def analyze_legacy_xls(file_path: Path, has_macro: bool, vba_module_count: int) 
     modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
 
     risk_score = 30
-    notes = "Legacy .xls format; convert to .xlsx for deep analysis"
+    notes = "旧形式(.xls); .xlsxに変換すると詳細分析可能"
     if has_macro:
         risk_score += 40
-        notes += "; Macro likely present"
+        notes += "; マクロ有りの可能性"
 
     return FileReport(
         path=str(file_path),
@@ -453,7 +453,7 @@ def _extract_group_name_subfolder(file_path: str, input_root: str) -> str:
         return "(未分類)"
     parts = rel.parts
     if len(parts) <= 1:
-        return "(ルート直下)"
+        return str(Path(input_root).name)
     return parts[0]
 
 

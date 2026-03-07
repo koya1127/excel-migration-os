@@ -329,7 +329,7 @@ def page_scan():
         medium = sum(1 for g in report.groups if g.migration_difficulty == "Medium")
         hard = sum(1 for g in report.groups if g.migration_difficulty == "Hard")
 
-        st.subheader("グループ別サマリー")
+        st.subheader("グループ別サマリー（フォルダ内の合計値）")
         gc1, gc2, gc3, gc4 = st.columns(4)
         gc1.metric("グループ数", len(report.groups))
         gc2.metric("\U0001f7e2 Easy", easy)
@@ -342,21 +342,21 @@ def page_scan():
             group_rows.append(
                 {
                     "グループ名": g.group_name,
-                    "ファイル数": g.file_count,
+                    "ファイル数（合計）": g.file_count,
                     "マクロ有り": g.macro_file_count,
                     "平均リスク": g.avg_risk_score,
                     "最大リスク": g.max_risk_score,
-                    "非互換関数": g.total_incompatible_functions,
-                    "難易度": f"{_difficulty_icon(g.migration_difficulty)} {g.migration_difficulty}",
+                    "Sheets非対応の関数": g.total_incompatible_functions,
+                    "移行難易度": f"{_difficulty_icon(g.migration_difficulty)} {g.migration_difficulty}",
                 }
             )
         st.dataframe(group_rows, use_container_width=True)
 
         # Drill-down per group
-        st.subheader("グループ詳細")
+        st.subheader("グループ詳細（フォルダ内のファイル一覧）")
         for g in report.groups:
             icon = _difficulty_icon(g.migration_difficulty)
-            label = f"{icon} {g.group_name} ({g.file_count}ファイル, {g.migration_difficulty})"
+            label = f"{icon} {g.group_name}（{g.file_count}ファイル, {g.migration_difficulty}）"
             with st.expander(label):
                 file_rows = []
                 for idx in g.file_indices:
@@ -367,8 +367,8 @@ def page_scan():
                             "拡張子": f.extension,
                             "サイズ(KB)": round(f.size_bytes / 1024, 1),
                             "マクロ": "有" if f.has_macro else "無",
-                            "数式数": f.formula_count,
-                            "非互換関数": f.incompatible_function_count,
+                            "セル数式の数": f.formula_count,
+                            "Sheets非対応の関数": f.incompatible_function_count,
                             "リスク": f.risk_score,
                             "備考": f.notes,
                         }
@@ -385,7 +385,8 @@ def page_scan():
                     "拡張子": f.extension,
                     "サイズ(KB)": round(f.size_bytes / 1024, 1),
                     "マクロ": "有" if f.has_macro else "無",
-                    "数式数": f.formula_count,
+                    "セル数式の数": f.formula_count,
+                    "Sheets非対応の関数": f.incompatible_function_count,
                     "リスク": f.risk_score,
                     "備考": f.notes,
                 }
