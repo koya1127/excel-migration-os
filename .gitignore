@@ -19,10 +19,21 @@ Thumbs.db
 
 # Reports
 out/
+output/
 
 # Env files
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.local.example
 
 # Google OAuth secrets
 credentials/
+
+# Node
+node_modules/
+.next/
+
+# C# / .NET
+bin/
+obj/
