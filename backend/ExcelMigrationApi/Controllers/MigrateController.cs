@@ -37,6 +37,12 @@ public class MigrateController : ControllerBase
         [FromForm] bool convertToSheets = true,
         [FromForm] string? folderId = null)
     {
+        var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
+        if (string.IsNullOrEmpty(googleToken))
+        {
+            return BadRequest(new { error = "Google account not connected. Please link your Google account in Settings." });
+        }
+
         if (files == null || files.Count == 0)
         {
             return BadRequest(new { error = "No files uploaded" });
@@ -68,7 +74,7 @@ public class MigrateController : ControllerBase
             }
 
             // Step 1: Upload to Google Drive (convert to Sheets)
-            var uploadReport = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId);
+            var uploadReport = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId, googleToken);
             migrateReport.Upload = uploadReport;
 
             // Step 2: Extract VBA modules from .xlsm files
@@ -158,7 +164,7 @@ public class MigrateController : ControllerBase
                 }).ToList()
             };
 
-            var deployReport = await _deployService.Deploy(deployRequest);
+            var deployReport = await _deployService.Deploy(deployRequest, googleToken);
             migrateReport.Deploy = deployReport;
 
             return Ok(migrateReport);

@@ -1,12 +1,16 @@
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using ExcelMigrationApi.Models;
 
 namespace ExcelMigrationApi.Services;
 
 public class DeployService
 {
-    public async Task<DeployReport> Deploy(DeployRequest request)
+    private readonly HttpClient _httpClient = new();
+    private const string ScriptApiBase = "https://script.googleapis.com/v1/projects";
+
+    public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
     {
         var report = new DeployReport
         {
@@ -15,85 +19,87 @@ public class DeployService
             FileCount = request.GasFiles.Count
         };
 
-        // Create a temp directory for the GAS project
-        var tempDir = Path.Combine(Path.GetTempPath(), "excel-migration-deploy-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
-
         try
         {
             // Step 1: Create a new Apps Script project bound to the spreadsheet
-            var (createExit, createOut, createErr) = await ProcessHelper.RunProcessAsync(
-                "clasp", $"create --type sheets --parentId {request.SpreadsheetId} --title \"Migration Script\"",
-                workingDir: tempDir, timeoutMs: 60000);
+            var createBody = JsonSerializer.Serialize(new
+            {
+                title = "Migration Script",
+                parentId = request.SpreadsheetId
+            });
 
-            if (createExit != 0)
+            var createRes = await SendRequest(HttpMethod.Post, ScriptApiBase, createBody, googleToken);
+            if (!createRes.IsSuccess)
             {
                 report.Status = "error";
-                report.Error = $"clasp create failed (exit {createExit}): {createErr}";
+                report.Error = $"Create project failed: {createRes.Body}";
                 return report;
             }
 
-            // Extract scriptId from .clasp.json that clasp created
-            var claspJsonPath = Path.Combine(tempDir, ".clasp.json");
-            if (File.Exists(claspJsonPath))
+            using var createDoc = JsonDocument.Parse(createRes.Body);
+            report.ScriptId = createDoc.RootElement.GetProperty("scriptId").GetString() ?? string.Empty;
+
+            // Step 2: Build file list for updateContent
+            var files = new List<object>
             {
-                try
+                // appsscript.json manifest
+                new
                 {
-                    var claspJson = File.ReadAllText(claspJsonPath);
-                    using var doc = JsonDocument.Parse(claspJson);
-                    if (doc.RootElement.TryGetProperty("scriptId", out var scriptIdProp))
+                    name = "appsscript",
+                    type = "JSON",
+                    source = JsonSerializer.Serialize(new
                     {
-                        report.ScriptId = scriptIdProp.GetString() ?? string.Empty;
-                    }
+                        timeZone = "Asia/Tokyo",
+                        dependencies = new { },
+                        runtimeVersion = "V8"
+                    }, new JsonSerializerOptions { WriteIndented = true })
                 }
-                catch { }
-            }
-
-            // Step 2: Write appsscript.json manifest
-            var manifest = new
-            {
-                timeZone = "Asia/Tokyo",
-                dependencies = new { },
-                runtimeVersion = "V8"
             };
-            var manifestJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "appsscript.json"), manifestJson);
 
-            // Step 3: Write each .gs file
             foreach (var gasFile in request.GasFiles)
             {
-                var ext = gasFile.Type == "HTML" ? ".html" : ".gs";
-                var safeName = gasFile.Name;
-                if (!safeName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                var name = gasFile.Name;
+                // Remove extension for API (it uses type to determine)
+                if (name.EndsWith(".gs", StringComparison.OrdinalIgnoreCase))
+                    name = name[..^3];
+                else if (name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                    name = name[..^5];
+
+                files.Add(new
                 {
-                    safeName += ext;
-                }
-                await File.WriteAllTextAsync(Path.Combine(tempDir, safeName), gasFile.Source);
-                report.FilesDeployed.Add(safeName);
+                    name,
+                    type = gasFile.Type?.ToUpperInvariant() == "HTML" ? "HTML" : "SERVER_JS",
+                    source = gasFile.Source
+                });
+
+                report.FilesDeployed.Add(gasFile.Name);
             }
 
-            // Step 4: Push to Apps Script
-            var (pushExit, pushOut, pushErr) = await ProcessHelper.RunProcessAsync(
-                "clasp", "push --force",
-                workingDir: tempDir, timeoutMs: 60000);
+            // Step 3: Update project content
+            var updateBody = JsonSerializer.Serialize(new { files });
+            var updateUrl = $"{ScriptApiBase}/{report.ScriptId}/content";
+            var updateRes = await SendRequest(HttpMethod.Put, updateUrl, updateBody, googleToken);
 
-            if (pushExit != 0)
+            if (!updateRes.IsSuccess)
             {
                 report.Status = "error";
-                report.Error = $"clasp push failed (exit {pushExit}): {pushErr}";
+                report.Error = $"Update content failed: {updateRes.Body}";
                 return report;
             }
 
-            // Step 5: Deploy
-            var (deployExit, deployOut, deployErr) = await ProcessHelper.RunProcessAsync(
-                "clasp", "deploy --description \"Auto-deployed by Excel Migration OS\"",
-                workingDir: tempDir, timeoutMs: 60000);
-
-            if (deployExit != 0)
+            // Step 4: Create a new version
+            var versionBody = JsonSerializer.Serialize(new
             {
-                // Push succeeded but deploy failed - partial success
+                description = "Auto-deployed by Excel Migration OS"
+            });
+            var versionUrl = $"{ScriptApiBase}/{report.ScriptId}/versions";
+            var versionRes = await SendRequest(HttpMethod.Post, versionUrl, versionBody, googleToken);
+
+            if (!versionRes.IsSuccess)
+            {
+                // Content updated but version creation failed - partial success
                 report.Status = "partial";
-                report.Error = $"clasp push succeeded but deploy failed (exit {deployExit}): {deployErr}";
+                report.Error = $"Content pushed but version creation failed: {versionRes.Body}";
                 return report;
             }
 
@@ -104,16 +110,19 @@ public class DeployService
             report.Status = "error";
             report.Error = ex.Message;
         }
-        finally
-        {
-            // Clean up temp dir
-            try
-            {
-                Directory.Delete(tempDir, recursive: true);
-            }
-            catch { }
-        }
 
         return report;
+    }
+
+    private async Task<(bool IsSuccess, string Body)> SendRequest(
+        HttpMethod method, string url, string jsonBody, string googleToken)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", googleToken);
+        request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
     }
 }

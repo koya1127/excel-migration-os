@@ -24,6 +24,12 @@ public class UploadController : ControllerBase
         [FromForm] bool convertToSheets = true,
         [FromForm] string? folderId = null)
     {
+        var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
+        if (string.IsNullOrEmpty(googleToken))
+        {
+            return BadRequest(new { error = "Google account not connected. Please link your Google account in Settings." });
+        }
+
         if (files == null || files.Count == 0)
         {
             return BadRequest(new { error = "No files uploaded" });
@@ -49,7 +55,7 @@ public class UploadController : ControllerBase
                 filePaths.Add(filePath);
             }
 
-            var report = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId);
+            var report = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId, googleToken);
             return Ok(report);
         }
         finally

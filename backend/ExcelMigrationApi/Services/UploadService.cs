@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using ExcelMigrationApi.Models;
 
@@ -5,13 +7,15 @@ namespace ExcelMigrationApi.Services;
 
 public class UploadService
 {
-    public async Task<UploadResult> UploadFile(string filePath, bool convertToSheets, string? folderId)
+    private readonly HttpClient _httpClient = new();
+
+    public async Task<UploadResult> UploadFile(string filePath, bool convertToSheets, string? folderId, string googleToken)
     {
         var fileName = Path.GetFileName(filePath);
 
         try
         {
-            // Build gws metadata JSON
+            // Build Drive API metadata
             var metadata = new Dictionary<string, object>
             {
                 ["name"] = Path.GetFileNameWithoutExtension(fileName)
@@ -28,43 +32,59 @@ public class UploadService
             }
 
             var metadataJson = JsonSerializer.Serialize(metadata);
-            // Escape for command line - use single quotes on the outside
-            var escapedJson = metadataJson.Replace("\"", "\\\"");
 
-            var args = $"drive files create --upload \"{filePath.Replace("\\", "/")}\" --json \"{escapedJson}\"";
+            // Determine upload MIME type
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            var mimeType = ext switch
+            {
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
+                ".xls" => "application/vnd.ms-excel",
+                ".csv" => "text/csv",
+                _ => "application/octet-stream"
+            };
 
-            var (exitCode, stdout, stderr) = await ProcessHelper.RunProcessAsync("gws", args, timeoutMs: 120000);
+            // Use multipart upload to Google Drive API
+            var fileBytes = await File.ReadAllBytesAsync(filePath);
 
-            if (exitCode != 0)
+            using var content = new MultipartContent("related");
+
+            // Part 1: metadata
+            var metadataPart = new StringContent(metadataJson, Encoding.UTF8, "application/json");
+            content.Add(metadataPart);
+
+            // Part 2: file content
+            var filePart = new ByteArrayContent(fileBytes);
+            filePart.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+            content.Add(filePart);
+
+            var request = new HttpRequestMessage(HttpMethod.Post,
+                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", googleToken);
+            request.Content = content;
+
+            var response = await _httpClient.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
             {
                 return new UploadResult
                 {
                     FileName = fileName,
                     Status = "error",
-                    Error = $"gws exited with code {exitCode}: {stderr}"
+                    Error = $"Drive API error {(int)response.StatusCode}: {responseBody}"
                 };
             }
 
-            // Parse JSON response from gws
             var driveFileId = string.Empty;
             var webViewLink = string.Empty;
 
-            try
-            {
-                using var doc = JsonDocument.Parse(stdout);
-                var root = doc.RootElement;
-
-                if (root.TryGetProperty("id", out var idProp))
-                    driveFileId = idProp.GetString() ?? string.Empty;
-
-                if (root.TryGetProperty("webViewLink", out var linkProp))
-                    webViewLink = linkProp.GetString() ?? string.Empty;
-            }
-            catch
-            {
-                // If we can't parse JSON but exit code was 0, treat as partial success
-                driveFileId = "(unknown - could not parse gws output)";
-            }
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("id", out var idProp))
+                driveFileId = idProp.GetString() ?? string.Empty;
+            if (root.TryGetProperty("webViewLink", out var linkProp))
+                webViewLink = linkProp.GetString() ?? string.Empty;
 
             return new UploadResult
             {
@@ -85,7 +105,7 @@ public class UploadService
         }
     }
 
-    public async Task<UploadReport> UploadFiles(List<string> filePaths, bool convertToSheets, string? folderId)
+    public async Task<UploadReport> UploadFiles(List<string> filePaths, bool convertToSheets, string? folderId, string googleToken)
     {
         var report = new UploadReport
         {
@@ -96,7 +116,7 @@ public class UploadService
 
         foreach (var filePath in filePaths)
         {
-            var result = await UploadFile(filePath, convertToSheets, folderId);
+            var result = await UploadFile(filePath, convertToSheets, folderId, googleToken);
             report.Files.Add(result);
 
             if (result.Status == "success")

@@ -9,6 +9,26 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function getGoogleToken(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/auth/google/token");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.accessToken || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getAuthHeadersWithGoogle(): Promise<Record<string, string>> {
+  const headers = await getAuthHeaders();
+  const googleToken = await getGoogleToken();
+  if (googleToken) {
+    headers["X-Google-Token"] = googleToken;
+  }
+  return headers;
+}
+
 export interface FileReport {
   path: string;
   extension: string;
@@ -190,7 +210,7 @@ export async function convertSingle(request: ConvertRequest): Promise<ConvertRep
 }
 
 export async function uploadFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<UploadReport> {
-  const authHeaders = await getAuthHeaders();
+  const authHeaders = await getAuthHeadersWithGoogle();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
@@ -201,7 +221,7 @@ export async function uploadFiles(files: File[], convertToSheets: boolean = true
 }
 
 export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Promise<DeployReport> {
-  const authHeaders = await getAuthHeaders();
+  const authHeaders = await getAuthHeadersWithGoogle();
   const res = await fetch(`${API_BASE}/api/deploy`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },
@@ -212,7 +232,7 @@ export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Pro
 }
 
 export async function migrateFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<MigrateReport> {
-  const authHeaders = await getAuthHeaders();
+  const authHeaders = await getAuthHeadersWithGoogle();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
