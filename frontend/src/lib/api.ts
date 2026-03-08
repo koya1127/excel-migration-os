@@ -123,6 +123,8 @@ export interface ConvertResult {
   gasCode: string;
   status: string;
   error: string;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 export interface ConvertReport {
@@ -130,6 +132,8 @@ export interface ConvertReport {
   total: number;
   success: number;
   failed: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
   results: ConvertResult[];
 }
 
@@ -195,7 +199,9 @@ export async function convertBatch(extractReport: ExtractReport): Promise<Conver
     body: JSON.stringify(extractReport),
   });
   if (!res.ok) throw new Error(`Convert failed: ${res.statusText}`);
-  return res.json();
+  const report: ConvertReport = await res.json();
+  await reportUsage(report.totalInputTokens, report.totalOutputTokens);
+  return report;
 }
 
 export async function convertSingle(request: ConvertRequest): Promise<ConvertReport> {
@@ -206,7 +212,20 @@ export async function convertSingle(request: ConvertRequest): Promise<ConvertRep
     body: JSON.stringify([request]),
   });
   if (!res.ok) throw new Error(`Convert failed: ${res.statusText}`);
-  return res.json();
+  const report: ConvertReport = await res.json();
+  await reportUsage(report.totalInputTokens, report.totalOutputTokens);
+  return report;
+}
+
+async function reportUsage(inputTokens: number, outputTokens: number): Promise<void> {
+  if (inputTokens + outputTokens <= 0) return;
+  try {
+    await fetch("/api/stripe/report-usage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inputTokens, outputTokens }),
+    });
+  } catch {}
 }
 
 export async function uploadFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<UploadReport> {

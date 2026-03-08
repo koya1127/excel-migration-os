@@ -30,6 +30,7 @@ export const PLANS: Plan[] = [
       "月10ファイルまで変換",
       "VBA → GAS 自動変換",
       "Google Drive アップロード",
+      "AI変換: ¥1/1Kトークン従量課金",
     ],
     stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER || "",
   },
@@ -43,6 +44,7 @@ export const PLANS: Plan[] = [
       "月50ファイルまで変換",
       "GAS自動デプロイ",
       "一括マイグレーション",
+      "AI変換: ¥1/1Kトークン従量課金",
     ],
     stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO || "",
     recommended: true,
@@ -57,10 +59,15 @@ export const PLANS: Plan[] = [
       "ファイル数無制限",
       "優先サポート",
       "チーム利用対応",
+      "AI変換: ¥1/1Kトークン従量課金",
     ],
     stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_BUSINESS || "",
   },
 ];
+
+// Metered pricing for AI conversion usage (per 1K tokens)
+export const METERED_PRICE_ID = process.env.NEXT_PUBLIC_STRIPE_PRICE_METERED || "";
+export const TOKEN_UNIT_PRICE_YEN = 1; // ¥1 per 1K tokens
 
 export function getPlanById(id: string): Plan | undefined {
   return PLANS.find((p) => p.id === id);
