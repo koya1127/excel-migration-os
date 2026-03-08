@@ -131,7 +131,8 @@ export default function SettingsPage() {
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Google アカウント連携</h2>
         <p className="text-sm text-gray-600 mb-4">
           Google Drive へのアップロードや Apps Script のデプロイに必要です。
-          あなた自身の Google アカウントのファイルとして保存されます。
+          ログイン認証とは別に、ファイル操作の権限を許可する必要があります。
+          変換後のファイルはあなた自身の Google アカウントに保存されます。
         </p>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">

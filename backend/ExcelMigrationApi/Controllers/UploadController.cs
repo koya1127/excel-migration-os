@@ -27,12 +27,12 @@ public class UploadController : ControllerBase
         var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
         if (string.IsNullOrEmpty(googleToken))
         {
-            return BadRequest(new { error = "Google account not connected. Please link your Google account in Settings." });
+            return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });
         }
 
         if (files == null || files.Count == 0)
         {
-            return BadRequest(new { error = "No files uploaded" });
+            return BadRequest(new { error = "ファイルがアップロードされていません" });
         }
 
         var tempDir = Path.Combine(Path.GetTempPath(), "excel-migration-upload-" + Guid.NewGuid().ToString("N"));

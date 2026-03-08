@@ -40,12 +40,12 @@ public class MigrateController : ControllerBase
         var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
         if (string.IsNullOrEmpty(googleToken))
         {
-            return BadRequest(new { error = "Google account not connected. Please link your Google account in Settings." });
+            return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });
         }
 
         if (files == null || files.Count == 0)
         {
-            return BadRequest(new { error = "No files uploaded" });
+            return BadRequest(new { error = "ファイルがアップロードされていません" });
         }
 
         var migrateReport = new MigrateReport
@@ -96,7 +96,7 @@ public class MigrateController : ControllerBase
                 {
                     GeneratedUtc = DateTime.UtcNow.ToString("o"),
                     Status = "skipped",
-                    Error = "No VBA modules to convert"
+                    Error = "変換するVBAモジュールがありません"
                 };
                 return Ok(migrateReport);
             }
@@ -132,7 +132,7 @@ public class MigrateController : ControllerBase
                 {
                     GeneratedUtc = DateTime.UtcNow.ToString("o"),
                     Status = "skipped",
-                    Error = "No successfully uploaded spreadsheet to deploy to"
+                    Error = "デプロイ先のスプレッドシートがありません"
                 };
                 return Ok(migrateReport);
             }
@@ -148,7 +148,7 @@ public class MigrateController : ControllerBase
                     GeneratedUtc = DateTime.UtcNow.ToString("o"),
                     SpreadsheetId = firstSuccess.DriveFileId,
                     Status = "skipped",
-                    Error = "No successful conversions to deploy"
+                    Error = "デプロイする変換結果がありません"
                 };
                 return Ok(migrateReport);
             }

@@ -235,7 +235,10 @@ export async function uploadFiles(files: File[], convertToSheets: boolean = true
   formData.append("convertToSheets", String(convertToSheets));
   if (folderId) formData.append("folderId", folderId);
   const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", headers: { ...authHeaders }, body: formData });
-  if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Upload failed: ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -246,7 +249,10 @@ export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Pro
     headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ spreadsheetId, gasFiles }),
   });
-  if (!res.ok) throw new Error(`Deploy failed: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Deploy failed: ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -257,6 +263,9 @@ export async function migrateFiles(files: File[], convertToSheets: boolean = tru
   formData.append("convertToSheets", String(convertToSheets));
   if (folderId) formData.append("folderId", folderId);
   const res = await fetch(`${API_BASE}/api/migrate`, { method: "POST", headers: { ...authHeaders }, body: formData });
-  if (!res.ok) throw new Error(`Migrate failed: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Migrate failed: ${res.statusText}`);
+  }
   return res.json();
 }

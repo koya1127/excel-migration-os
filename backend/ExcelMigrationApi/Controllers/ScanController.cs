@@ -25,14 +25,14 @@ public class ScanController : ControllerBase
     {
         if (files == null || files.Count == 0)
         {
-            return BadRequest(new { error = "No files uploaded" });
+            return BadRequest(new { error = "ファイルがアップロードされていません" });
         }
 
         // Validate groupBy parameter
         var validGroupBy = new HashSet<string> { "none", "prefix", "subfolder" };
         if (!validGroupBy.Contains(groupBy))
         {
-            return BadRequest(new { error = "groupBy must be one of: none, prefix, subfolder" });
+            return BadRequest(new { error = "groupByはnone, prefix, subfolderのいずれかを指定してください" });
         }
 
         var tempDir = Path.Combine(Path.GetTempPath(), "excel-migration-scan-" + Guid.NewGuid().ToString("N"));

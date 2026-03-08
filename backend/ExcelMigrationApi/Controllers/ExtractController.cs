@@ -23,7 +23,7 @@ public class ExtractController : ControllerBase
     {
         if (files == null || files.Count == 0)
         {
-            return BadRequest(new { error = "No files uploaded" });
+            return BadRequest(new { error = "ファイルがアップロードされていません" });
         }
 
         var tempDir = Path.Combine(Path.GetTempPath(), "excel-migration-extract-" + Guid.NewGuid().ToString("N"));
