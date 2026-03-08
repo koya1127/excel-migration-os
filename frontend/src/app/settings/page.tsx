@@ -15,8 +15,8 @@ export default function SettingsPage() {
   const [portalLoading, setPortalLoading] = useState(false);
 
   const meta = (user?.publicMetadata || {}) as Record<string, unknown>;
-  const planId = (meta.planId as string) || "free";
   const subscriptionStatus = meta.subscriptionStatus as string | undefined;
+  const hasSubscription = subscriptionStatus === "active";
   const googleConnected = !!meta.googleConnected;
 
   useEffect(() => {
@@ -62,33 +62,31 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-3xl px-6 py-12">
       <h1 className="text-2xl font-bold text-gray-900 mb-8">設定</h1>
 
-      {/* プラン情報 */}
+      {/* 課金ステータス */}
       <section className="mb-8 rounded-xl border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">プラン</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">課金</h2>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-500">現在のプラン</p>
-            <p className="text-xl font-bold text-gray-900 capitalize">{planId}</p>
-            {subscriptionStatus && (
-              <span
-                className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  subscriptionStatus === "active"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-600"
-                }`}
-              >
-                {subscriptionStatus === "active" ? "有効" : subscriptionStatus}
+            <p className="text-sm text-gray-500">ステータス</p>
+            <p className="text-xl font-bold text-gray-900">
+              {hasSubscription ? "従量課金（有効）" : "未登録"}
+            </p>
+            {hasSubscription && (
+              <span className="mt-1 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-100 text-green-700">
+                ¥3 / 1Kトークン
               </span>
             )}
           </div>
           <div className="flex gap-3">
-            <a
-              href="/pricing"
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              プラン変更
-            </a>
-            {planId !== "free" && (
+            {!hasSubscription && (
+              <a
+                href="/pricing"
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+              >
+                従量課金を開始
+              </a>
+            )}
+            {hasSubscription && (
               <button
                 onClick={handleManageBilling}
                 disabled={portalLoading}

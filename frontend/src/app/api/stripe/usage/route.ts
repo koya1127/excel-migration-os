@@ -16,8 +16,8 @@ export async function GET() {
   const filesConverted = (meta.filesConvertedThisMonth as number) || 0;
   const tokensUsed = (meta.tokensUsedThisMonth as number) || 0;
 
-  // Claude API pricing: ~¥0.5 per 1K tokens (approximate)
-  const estimatedCost = Math.ceil(tokensUsed / 1000 * 0.5);
+  // ¥3 per 1K tokens
+  const estimatedCost = Math.ceil(tokensUsed / 1000 * 3);
 
   return NextResponse.json({
     filesConverted,

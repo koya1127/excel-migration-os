@@ -23,9 +23,8 @@ export async function POST(req: NextRequest) {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const userId = session.metadata?.userId;
-    const planId = session.metadata?.planId;
 
-    if (userId && planId) {
+    if (userId) {
       const clerk = await clerkClient();
       const user = await clerk.users.getUser(userId);
       const currentMeta = (user.publicMetadata || {}) as Record<string, unknown>;
@@ -33,7 +32,6 @@ export async function POST(req: NextRequest) {
       await clerk.users.updateUserMetadata(userId, {
         publicMetadata: {
           ...currentMeta,
-          planId,
           stripeCustomerId: session.customer as string,
           stripeSubscriptionId: session.subscription as string,
           subscriptionStatus: "active",
@@ -58,7 +56,6 @@ export async function POST(req: NextRequest) {
       await clerk.users.updateUserMetadata(user.id, {
         publicMetadata: {
           ...currentMeta,
-          planId: "free",
           subscriptionStatus: "canceled",
           stripeSubscriptionId: null,
         },

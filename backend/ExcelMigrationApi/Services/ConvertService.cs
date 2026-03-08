@@ -11,7 +11,7 @@ public class ConvertService
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
     private const string AnthropicApiUrl = "https://api.anthropic.com/v1/messages";
-    private const string Model = "claude-sonnet-4-20250514";
+    private const string Model = "claude-sonnet-4-6";
 
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
