@@ -2,12 +2,16 @@
 
 import { useState, useCallback, useRef } from "react";
 import {
-  migrateFiles,
-  type MigrateReport,
+  uploadFiles,
+  extractFiles,
+  convertBatch,
+  deployGas,
+  checkSubscription,
   type UploadReport,
   type ExtractReport,
   type ConvertReport,
   type DeployReport,
+  type GasFile,
 } from "@/lib/api";
 
 function Spinner() {
@@ -19,14 +23,18 @@ function Spinner() {
   );
 }
 
+type StepStatus = "pending" | "active" | "success" | "error";
+
 function StepIndicator({
   step,
   label,
   status,
+  detail,
 }: {
   step: number;
   label: string;
-  status: "pending" | "active" | "success" | "error";
+  status: StepStatus;
+  detail?: string;
 }) {
   const colors = {
     pending: "border-gray-300 bg-gray-100 text-gray-400",
@@ -56,13 +64,18 @@ function StepIndicator({
       >
         {icons[status]}
       </div>
-      <span
-        className={`text-sm font-medium ${
-          status === "pending" ? "text-gray-400" : status === "error" ? "text-red-700" : "text-gray-900"
-        }`}
-      >
-        {label}
-      </span>
+      <div className="flex flex-col">
+        <span
+          className={`text-sm font-medium ${
+            status === "pending" ? "text-gray-400" : status === "error" ? "text-red-700" : "text-gray-900"
+          }`}
+        >
+          {label}
+        </span>
+        {detail && (
+          <span className="text-xs text-gray-500">{detail}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -112,6 +125,7 @@ function ConvertStepDetail({ data }: { data: ConvertReport }) {
         <span className="text-gray-500">合計: <span className="font-medium text-gray-900">{data.total}</span></span>
         <span className="text-green-600">成功: {data.success}</span>
         {data.failed > 0 && <span className="text-red-600">失敗: {data.failed}</span>}
+        <span className="text-gray-400">トークン: {(data.totalInputTokens + data.totalOutputTokens).toLocaleString()}</span>
       </div>
       {data.results.map((r, i) => (
         <div key={i} className="flex items-center gap-3 text-xs">
@@ -158,17 +172,35 @@ function DeployStepDetail({ data }: { data: DeployReport }) {
   );
 }
 
+interface StepState {
+  upload: { status: StepStatus; detail: string; data: UploadReport | null };
+  extract: { status: StepStatus; detail: string; data: ExtractReport | null };
+  convert: { status: StepStatus; detail: string; data: ConvertReport | null };
+  deploy: { status: StepStatus; detail: string; data: DeployReport | null };
+}
+
+const initialSteps: StepState = {
+  upload: { status: "pending", detail: "", data: null },
+  extract: { status: "pending", detail: "", data: null },
+  convert: { status: "pending", detail: "", data: null },
+  deploy: { status: "pending", detail: "", data: null },
+};
+
 export default function MigratePage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [convertToSheets, setConvertToSheets] = useState(true);
   const [folderId, setFolderId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<MigrateReport | null>(null);
+  const [steps, setSteps] = useState<StepState>(initialSteps);
   const [isDragging, setIsDragging] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const started = steps.upload.status !== "pending";
 
   const addFiles = useCallback((files: File[]) => {
     const accepted = files.filter((f) => /\.xlsm$/i.test(f.name));
@@ -236,42 +268,160 @@ export default function MigratePage() {
     });
   };
 
+  const updateStep = (key: keyof StepState, update: Partial<StepState[keyof StepState]>) => {
+    setSteps((prev) => ({ ...prev, [key]: { ...prev[key], ...update } }));
+  };
+
   const handleMigrate = async () => {
     if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
-    setReport(null);
+    setSteps(initialSteps);
+    setExpandedSteps(new Set());
+    setElapsed(0);
+
+    // Start timer
+    const start = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+
     try {
-      const result = await migrateFiles(selectedFiles, convertToSheets, folderId || undefined);
-      setReport(result);
-      // Auto-expand all steps
-      setExpandedSteps(new Set([1, 2, 3, 4]));
+      // Subscription check
+      const { hasSubscription } = await checkSubscription();
+      if (!hasSubscription) {
+        setError("移行機能を使用するには従量課金プランへの登録が必要です。設定ページから登録してください。");
+        return;
+      }
+
+      // Step 1: Upload
+      updateStep("upload", { status: "active", detail: `${selectedFiles.length} 件アップロード中...` });
+      const uploadResult = await uploadFiles(selectedFiles, convertToSheets, folderId || undefined);
+      updateStep("upload", {
+        status: uploadResult.failureCount > 0 ? "error" : "success",
+        detail: `${uploadResult.successCount}/${uploadResult.fileCount} 件成功`,
+        data: uploadResult,
+      });
+      setExpandedSteps((prev) => new Set([...prev, 1]));
+
+      // Step 2: Extract
+      updateStep("extract", { status: "active", detail: "VBA コード抽出中..." });
+      const extractResult = await extractFiles(selectedFiles);
+      updateStep("extract", {
+        status: "success",
+        detail: `${extractResult.moduleCount} モジュール、${extractResult.controls.length} コントロール`,
+        data: extractResult,
+      });
+      setExpandedSteps((prev) => new Set([...prev, 2]));
+
+      if (extractResult.moduleCount === 0) {
+        updateStep("convert", { status: "success", detail: "変換対象の VBA モジュールなし" });
+        updateStep("deploy", { status: "success", detail: "デプロイ対象なし" });
+        return;
+      }
+
+      // Step 3: Convert
+      updateStep("convert", { status: "active", detail: `${extractResult.moduleCount} モジュールを AI 変換中...` });
+      const convertResult = await convertBatch(extractResult);
+      updateStep("convert", {
+        status: convertResult.failed > 0 ? "error" : "success",
+        detail: `${convertResult.success}/${convertResult.total} 成功（${(convertResult.totalInputTokens + convertResult.totalOutputTokens).toLocaleString()} トークン）`,
+        data: convertResult,
+      });
+      setExpandedSteps((prev) => new Set([...prev, 3]));
+
+      // Step 4: Deploy — per-file: each spreadsheet gets its own GAS
+      const successUploads = uploadResult.files.filter((f) => f.status.toLowerCase() === "success" && f.driveFileId);
+      const successConverts = convertResult.results.filter((r) => r.status.toLowerCase() === "success" && r.gasCode);
+
+      if (successConverts.length === 0 || successUploads.length === 0) {
+        updateStep("deploy", { status: "error", detail: "デプロイ可能なファイルがありません" });
+        return;
+      }
+
+      // Group converted GAS by source file
+      const gasByFile = new Map<string, GasFile[]>();
+      for (const r of successConverts) {
+        const key = r.sourceFile || "";
+        if (!gasByFile.has(key)) gasByFile.set(key, []);
+        gasByFile.get(key)!.push({ name: r.moduleName + ".gs", source: r.gasCode, type: "SERVER_JS" });
+      }
+
+      // Match each upload to its GAS files and deploy
+      const deployResults: { fileName: string; scriptId?: string; error?: string }[] = [];
+      let deployedCount = 0;
+      let deployErrorCount = 0;
+
+      updateStep("deploy", { status: "active", detail: `${successUploads.length} スプレッドシートにデプロイ中...` });
+
+      for (const upload of successUploads) {
+        const gasFiles = gasByFile.get(upload.fileName);
+        if (!gasFiles || gasFiles.length === 0) {
+          deployResults.push({ fileName: upload.fileName, error: "VBAモジュールなし（スキップ）" });
+          continue;
+        }
+
+        try {
+          const result = await deployGas(upload.driveFileId, gasFiles);
+          if (result.error) {
+            deployResults.push({ fileName: upload.fileName, error: result.error });
+            deployErrorCount++;
+          } else {
+            deployResults.push({ fileName: upload.fileName, scriptId: result.scriptId });
+            deployedCount++;
+          }
+        } catch (e) {
+          deployResults.push({ fileName: upload.fileName, error: e instanceof Error ? e.message : "デプロイ失敗" });
+          deployErrorCount++;
+        }
+      }
+
+      const deployDetail = deployErrorCount > 0
+        ? `${deployedCount}/${deployedCount + deployErrorCount} 成功`
+        : `${deployedCount} スプレッドシートにデプロイ完了`;
+
+      updateStep("deploy", {
+        status: deployErrorCount > 0 && deployedCount === 0 ? "error" : deployErrorCount > 0 ? "error" : "success",
+        detail: deployDetail,
+        data: {
+          generatedUtc: new Date().toISOString(),
+          spreadsheetId: "",
+          scriptId: "",
+          fileCount: deployedCount,
+          filesDeployed: deployResults.filter(d => d.scriptId).map(d => d.fileName),
+          status: deployErrorCount > 0 ? "partial" : "success",
+          error: deployResults.filter(d => d.error).map(d => `${d.fileName}: ${d.error}`).join("; "),
+        } as DeployReport,
+      });
+      setExpandedSteps((prev) => new Set([...prev, 4]));
+
     } catch (err) {
       setError(err instanceof Error ? err.message : "移行に失敗しました");
+      // Mark current active step as error
+      const errMsg = err instanceof Error ? err.message : "エラー";
+      setSteps((prev) => ({
+        ...prev,
+        upload: prev.upload.status === "active" ? { ...prev.upload, status: "error" as const, detail: errMsg } : prev.upload,
+        extract: prev.extract.status === "active" ? { ...prev.extract, status: "error" as const, detail: errMsg } : prev.extract,
+        convert: prev.convert.status === "active" ? { ...prev.convert, status: "error" as const, detail: errMsg } : prev.convert,
+        deploy: prev.deploy.status === "active" ? { ...prev.deploy, status: "error" as const, detail: errMsg } : prev.deploy,
+      }));
     } finally {
       setLoading(false);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     }
   };
 
-  const getStepStatus = (stepData: UploadReport | ExtractReport | ConvertReport | DeployReport | null, stepKey: string): "pending" | "active" | "success" | "error" => {
-    if (loading && !report) return "active";
-    if (!report) return "pending";
-    if (!stepData) return "error";
-    // Check for errors based on step type
-    if (stepKey === "upload") {
-      const d = stepData as UploadReport;
-      return d.failureCount > 0 ? "error" : "success";
-    }
-    if (stepKey === "convert") {
-      const d = stepData as ConvertReport;
-      return d.failed > 0 ? "error" : "success";
-    }
-    if (stepKey === "deploy") {
-      const d = stepData as DeployReport;
-      return d.error ? "error" : "success";
-    }
-    return "success";
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}分${sec}秒` : `${sec}秒`;
   };
+
+  const allDone = !loading && started && steps.upload.status !== "pending";
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
@@ -386,7 +536,7 @@ export default function MigratePage() {
           </div>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-6 flex items-center gap-4">
           <button
             onClick={handleMigrate}
             disabled={selectedFiles.length === 0 || loading}
@@ -398,6 +548,9 @@ export default function MigratePage() {
               "移行開始"
             )}
           </button>
+          {loading && (
+            <span className="text-sm text-gray-500">経過時間: {formatTime(elapsed)}</span>
+          )}
         </div>
       </div>
 
@@ -409,33 +562,32 @@ export default function MigratePage() {
       )}
 
       {/* Progress / Results */}
-      {(loading || report) && (
+      {started && (
         <div className="mt-8">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div className="border-b border-gray-200 px-6 py-4">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">移行プロセス</h2>
+              {!loading && allDone && (
+                <span className="text-sm text-gray-500">完了 — {formatTime(elapsed)}</span>
+              )}
             </div>
             <div className="p-6 space-y-0">
               {/* Step 1: Upload */}
               <div>
                 <div
-                  className={`flex items-center justify-between py-4 ${report ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
-                  onClick={() => report && toggleStep(1)}
+                  className={`flex items-center justify-between py-4 ${steps.upload.data ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
+                  onClick={() => steps.upload.data && toggleStep(1)}
                 >
-                  <StepIndicator
-                    step={1}
-                    label="アップロード"
-                    status={report ? getStepStatus(report.upload, "upload") : (loading ? "active" : "pending")}
-                  />
-                  {report && (
+                  <StepIndicator step={1} label="アップロード" status={steps.upload.status} detail={steps.upload.detail} />
+                  {steps.upload.data && (
                     <span className="text-gray-400 text-sm">
                       {expandedSteps.has(1) ? "\u25BC" : "\u25B6"}
                     </span>
                   )}
                 </div>
-                {report && expandedSteps.has(1) && report.upload && (
+                {expandedSteps.has(1) && steps.upload.data && (
                   <div className="ml-[52px] pb-4">
-                    <UploadStepDetail data={report.upload} />
+                    <UploadStepDetail data={steps.upload.data} />
                   </div>
                 )}
                 <div className="ml-5 h-6 border-l-2 border-gray-200"></div>
@@ -444,23 +596,19 @@ export default function MigratePage() {
               {/* Step 2: Extract */}
               <div>
                 <div
-                  className={`flex items-center justify-between py-4 ${report ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
-                  onClick={() => report && toggleStep(2)}
+                  className={`flex items-center justify-between py-4 ${steps.extract.data ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
+                  onClick={() => steps.extract.data && toggleStep(2)}
                 >
-                  <StepIndicator
-                    step={2}
-                    label="VBA 抽出"
-                    status={report ? getStepStatus(report.extract, "extract") : "pending"}
-                  />
-                  {report && (
+                  <StepIndicator step={2} label="VBA 抽出" status={steps.extract.status} detail={steps.extract.detail} />
+                  {steps.extract.data && (
                     <span className="text-gray-400 text-sm">
                       {expandedSteps.has(2) ? "\u25BC" : "\u25B6"}
                     </span>
                   )}
                 </div>
-                {report && expandedSteps.has(2) && report.extract && (
+                {expandedSteps.has(2) && steps.extract.data && (
                   <div className="ml-[52px] pb-4">
-                    <ExtractStepDetail data={report.extract} />
+                    <ExtractStepDetail data={steps.extract.data} />
                   </div>
                 )}
                 <div className="ml-5 h-6 border-l-2 border-gray-200"></div>
@@ -469,23 +617,19 @@ export default function MigratePage() {
               {/* Step 3: Convert */}
               <div>
                 <div
-                  className={`flex items-center justify-between py-4 ${report ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
-                  onClick={() => report && toggleStep(3)}
+                  className={`flex items-center justify-between py-4 ${steps.convert.data ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
+                  onClick={() => steps.convert.data && toggleStep(3)}
                 >
-                  <StepIndicator
-                    step={3}
-                    label="VBA → GAS 変換"
-                    status={report ? getStepStatus(report.convert, "convert") : "pending"}
-                  />
-                  {report && (
+                  <StepIndicator step={3} label="VBA → GAS 変換" status={steps.convert.status} detail={steps.convert.detail} />
+                  {steps.convert.data && (
                     <span className="text-gray-400 text-sm">
                       {expandedSteps.has(3) ? "\u25BC" : "\u25B6"}
                     </span>
                   )}
                 </div>
-                {report && expandedSteps.has(3) && report.convert && (
+                {expandedSteps.has(3) && steps.convert.data && (
                   <div className="ml-[52px] pb-4">
-                    <ConvertStepDetail data={report.convert} />
+                    <ConvertStepDetail data={steps.convert.data} />
                   </div>
                 )}
                 <div className="ml-5 h-6 border-l-2 border-gray-200"></div>
@@ -494,23 +638,19 @@ export default function MigratePage() {
               {/* Step 4: Deploy */}
               <div>
                 <div
-                  className={`flex items-center justify-between py-4 ${report ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
-                  onClick={() => report && toggleStep(4)}
+                  className={`flex items-center justify-between py-4 ${steps.deploy.data ? "cursor-pointer hover:bg-gray-50 -mx-6 px-6" : ""}`}
+                  onClick={() => steps.deploy.data && toggleStep(4)}
                 >
-                  <StepIndicator
-                    step={4}
-                    label="Apps Script デプロイ"
-                    status={report ? getStepStatus(report.deploy, "deploy") : "pending"}
-                  />
-                  {report && (
+                  <StepIndicator step={4} label="Apps Script デプロイ" status={steps.deploy.status} detail={steps.deploy.detail} />
+                  {steps.deploy.data && (
                     <span className="text-gray-400 text-sm">
                       {expandedSteps.has(4) ? "\u25BC" : "\u25B6"}
                     </span>
                   )}
                 </div>
-                {report && expandedSteps.has(4) && report.deploy && (
+                {expandedSteps.has(4) && steps.deploy.data && (
                   <div className="ml-[52px] pb-4">
-                    <DeployStepDetail data={report.deploy} />
+                    <DeployStepDetail data={steps.deploy.data} />
                   </div>
                 )}
               </div>
@@ -518,18 +658,27 @@ export default function MigratePage() {
           </div>
 
           {/* Summary card after completion */}
-          {report && !loading && (
-            <div className="mt-6 rounded-xl border border-green-200 bg-green-50 p-6 shadow-sm">
-              <h3 className="font-semibold text-green-800">移行完了</h3>
-              <p className="mt-1 text-sm text-green-700">
-                {report.upload?.successCount || 0} 件のファイルをアップロードし、
-                {report.convert?.success || 0} 件の VBA モジュールを変換しました。
+          {allDone && !error && (
+            <div className={`mt-6 rounded-xl border p-6 shadow-sm ${
+              steps.deploy.status === "error" || steps.convert.status === "error"
+                ? "border-yellow-200 bg-yellow-50"
+                : "border-green-200 bg-green-50"
+            }`}>
+              <h3 className={`font-semibold ${
+                steps.deploy.status === "error" || steps.convert.status === "error"
+                  ? "text-yellow-800"
+                  : "text-green-800"
+              }`}>
+                {steps.deploy.status === "error" || steps.convert.status === "error"
+                  ? "移行完了（一部エラーあり）"
+                  : "移行完了"
+                }
+              </h3>
+              <p className="mt-1 text-sm text-gray-700">
+                {steps.upload.data?.successCount || 0} 件アップロード、
+                {steps.convert.data?.success || 0} 件変換、
+                経過時間 {formatTime(elapsed)}
               </p>
-              {report.deploy?.scriptId && (
-                <p className="mt-1 text-xs text-green-600 font-mono">
-                  Script ID: {report.deploy.scriptId}
-                </p>
-              )}
             </div>
           )}
         </div>

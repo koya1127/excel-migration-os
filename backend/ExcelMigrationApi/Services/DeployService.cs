@@ -75,16 +75,54 @@ public class DeployService
                 report.FilesDeployed.Add(gasFile.Name);
             }
 
-            // Step 3: Update project content
-            var updateBody = JsonSerializer.Serialize(new { files });
+            // Step 3: Update project content (retry with problematic files excluded)
             var updateUrl = $"{ScriptApiBase}/{report.ScriptId}/content";
-            var updateRes = await SendRequest(HttpMethod.Put, updateUrl, updateBody, googleToken);
+            var filesToDeploy = new List<object>(files);
+            var excludedFiles = new List<string>();
+            var maxRetries = 5;
 
-            if (!updateRes.IsSuccess)
+            for (var attempt = 0; attempt <= maxRetries; attempt++)
             {
-                report.Status = "error";
-                report.Error = $"Update content failed: {updateRes.Body}";
-                return report;
+                var updateBody = JsonSerializer.Serialize(new { files = filesToDeploy });
+                var updateRes = await SendRequest(HttpMethod.Put, updateUrl, updateBody, googleToken);
+
+                if (updateRes.IsSuccess)
+                    break;
+
+                // Try to extract the problematic file name from error
+                var errorFileName = ExtractErrorFileName(updateRes.Body);
+
+                if (errorFileName == null || attempt == maxRetries)
+                {
+                    // Can't identify the file or max retries reached
+                    if (excludedFiles.Count > 0)
+                    {
+                        // Partial success - some files were excluded
+                        report.Status = "partial";
+                        report.Error = $"{excludedFiles.Count} ファイルを構文エラーのため除外: {string.Join(", ", excludedFiles)}。最終エラー: {updateRes.Body}";
+                        return report;
+                    }
+                    report.Status = "error";
+                    report.Error = $"Update content failed: {updateRes.Body}";
+                    return report;
+                }
+
+                // Remove the problematic file and retry
+                var nameWithoutExt = errorFileName.EndsWith(".gs") ? errorFileName[..^3] : errorFileName;
+                filesToDeploy.RemoveAll(f =>
+                {
+                    var json = JsonSerializer.Serialize(f);
+                    using var doc = JsonDocument.Parse(json);
+                    var name = doc.RootElement.GetProperty("name").GetString();
+                    return name == nameWithoutExt;
+                });
+                excludedFiles.Add(errorFileName);
+                report.FilesDeployed.Remove(errorFileName);
+            }
+
+            if (excludedFiles.Count > 0)
+            {
+                report.Error = $"{excludedFiles.Count} ファイルを構文エラーのため除外: {string.Join(", ", excludedFiles)}";
             }
 
             // Step 4: Create a new version
@@ -112,6 +150,19 @@ public class DeployService
         }
 
         return report;
+    }
+
+    private static string? ExtractErrorFileName(string errorBody)
+    {
+        // Error format: "... file: Module1.gs"
+        try
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(errorBody, @"file:\s*(\S+\.gs)");
+            if (match.Success)
+                return match.Groups[1].Value;
+        }
+        catch { }
+        return null;
     }
 
     private async Task<(bool IsSuccess, string Body)> SendRequest(

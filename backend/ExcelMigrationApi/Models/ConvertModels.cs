@@ -5,6 +5,7 @@ public class ConvertRequest
     public string VbaCode { get; set; } = string.Empty;
     public string ModuleName { get; set; } = string.Empty;
     public string ModuleType { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
     public List<FormControl>? ButtonContext { get; set; }
 }
 
@@ -14,6 +15,7 @@ public class ConvertResult
     public string GasCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty; // "success" or "error"
     public string Error { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
 }

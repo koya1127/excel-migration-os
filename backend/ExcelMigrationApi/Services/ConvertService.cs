@@ -11,7 +11,10 @@ public class ConvertService
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
     private const string AnthropicApiUrl = "https://api.anthropic.com/v1/messages";
-    private const string Model = "claude-sonnet-4-6";
+    private const string ModelLarge = "claude-sonnet-4-6";
+    private const string ModelSmall = "claude-haiku-4-5-20251001";
+    private const int SmallModuleThreshold = 50; // lines
+    private const int MaxConcurrency = 5;
 
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
@@ -22,7 +25,10 @@ Rules:
 - Replace MsgBox with Browser.msgBox or SpreadsheetApp.getUi().alert()
 - Replace InputBox with Browser.inputBox
 - If button context is provided, generate an onOpen() function that adds a custom menu
-- Output ONLY the .gs code, no explanations";
+- Output ONLY the .gs code, no explanations
+- CRITICAL: Ensure all braces {}, parentheses (), and brackets [] are properly closed
+- CRITICAL: The output must be syntactically valid JavaScript. Never truncate code.
+- If the VBA is too complex to fully convert, output a simplified working stub with TODO comments";
 
     public ConvertService(IConfiguration config)
     {
@@ -39,6 +45,7 @@ Rules:
             return new ConvertResult
             {
                 ModuleName = request.ModuleName,
+                SourceFile = request.SourceFile,
                 Status = "error",
                 Error = "ANTHROPIC_API_KEY is not configured"
             };
@@ -67,10 +74,12 @@ Rules:
                 userMessage.AppendLine("Generate an onOpen() function that creates a custom menu with these buttons.");
             }
 
+            var model = request.VbaCode.Split('\n').Length <= SmallModuleThreshold ? ModelSmall : ModelLarge;
+
             var requestBody = new
             {
-                model = Model,
-                max_tokens = 4096,
+                model,
+                max_tokens = 8192,
                 system = SystemPrompt,
                 messages = new[]
                 {
@@ -92,6 +101,7 @@ Rules:
                 return new ConvertResult
                 {
                     ModuleName = request.ModuleName,
+                    SourceFile = request.SourceFile,
                     Status = "error",
                     Error = $"API error {(int)response.StatusCode}: {responseBody}"
                 };
@@ -120,6 +130,7 @@ Rules:
             return new ConvertResult
             {
                 ModuleName = request.ModuleName,
+                SourceFile = request.SourceFile,
                 GasCode = gasCode,
                 Status = "success",
                 InputTokens = inputTokens,
@@ -131,6 +142,7 @@ Rules:
             return new ConvertResult
             {
                 ModuleName = request.ModuleName,
+                SourceFile = request.SourceFile,
                 Status = "error",
                 Error = ex.Message
             };
@@ -145,18 +157,35 @@ Rules:
             Total = requests.Count
         };
 
-        foreach (var request in requests)
+        // Process in parallel with concurrency limit
+        var semaphore = new SemaphoreSlim(MaxConcurrency);
+        var tasks = requests.Select(async (request, index) =>
         {
-            var result = await ConvertModule(request);
-            report.Results.Add(result);
+            await semaphore.WaitAsync();
+            try
+            {
+                return (Index: index, Result: await ConvertModule(request));
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToList();
 
-            if (result.Status == "success")
+        var results = await Task.WhenAll(tasks);
+
+        // Add results in original order
+        foreach (var item in results.OrderBy(r => r.Index))
+        {
+            report.Results.Add(item.Result);
+
+            if (item.Result.Status == "success")
                 report.Success++;
             else
                 report.Failed++;
 
-            report.TotalInputTokens += result.InputTokens;
-            report.TotalOutputTokens += result.OutputTokens;
+            report.TotalInputTokens += item.Result.InputTokens;
+            report.TotalOutputTokens += item.Result.OutputTokens;
         }
 
         return report;

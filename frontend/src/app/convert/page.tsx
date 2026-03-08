@@ -5,6 +5,7 @@ import {
   extractFiles,
   convertBatch,
   convertSingle,
+  checkSubscription,
   type ExtractReport,
   type ConvertReport,
   type ConvertResult,
@@ -126,11 +127,21 @@ export default function ConvertPage() {
     [handleFiles, addFiles]
   );
 
+  const ensureSubscription = async (): Promise<boolean> => {
+    const { hasSubscription } = await checkSubscription();
+    if (!hasSubscription) {
+      setError("変換機能を使用するには従量課金プランへの登録が必要です。設定ページから登録してください。");
+      return false;
+    }
+    return true;
+  };
+
   const handleFileConvert = async () => {
     if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
     try {
+      if (!(await ensureSubscription())) return;
       const ext = await extractFiles(selectedFiles);
       setExtractReport(ext);
       const result = await convertBatch(ext);
@@ -148,6 +159,7 @@ export default function ConvertPage() {
     setError(null);
     setExtractReport(null);
     try {
+      if (!(await ensureSubscription())) return;
       const result = await convertSingle({
         vbaCode,
         moduleName: moduleName || "Module1",

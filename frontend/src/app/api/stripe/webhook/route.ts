@@ -44,22 +44,34 @@ export async function POST(req: NextRequest) {
     const subscription = event.data.object;
     const customerId = subscription.customer as string;
 
-    // Find user by stripeCustomerId in Clerk
+    // Find user by stripeCustomerId in Clerk (paginated)
     const clerk = await clerkClient();
-    const users = await clerk.users.getUserList({ limit: 100 });
-    const user = users.data.find(
-      (u) => (u.publicMetadata as Record<string, unknown>)?.stripeCustomerId === customerId
-    );
+    let found = false;
+    let offset = 0;
+    const limit = 100;
 
-    if (user) {
-      const currentMeta = (user.publicMetadata || {}) as Record<string, unknown>;
-      await clerk.users.updateUserMetadata(user.id, {
-        publicMetadata: {
-          ...currentMeta,
-          subscriptionStatus: "canceled",
-          stripeSubscriptionId: null,
-        },
-      });
+    while (!found) {
+      const users = await clerk.users.getUserList({ limit, offset });
+      if (users.data.length === 0) break;
+
+      const user = users.data.find(
+        (u) => (u.publicMetadata as Record<string, unknown>)?.stripeCustomerId === customerId
+      );
+
+      if (user) {
+        const currentMeta = (user.publicMetadata || {}) as Record<string, unknown>;
+        await clerk.users.updateUserMetadata(user.id, {
+          publicMetadata: {
+            ...currentMeta,
+            subscriptionStatus: "canceled",
+            stripeSubscriptionId: null,
+          },
+        });
+        found = true;
+      }
+
+      if (users.data.length < limit) break;
+      offset += limit;
     }
   }
 

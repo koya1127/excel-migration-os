@@ -61,6 +61,7 @@ public class ConvertController : ControllerBase
                 VbaCode = module.Code,
                 ModuleName = module.ModuleName,
                 ModuleType = module.ModuleType,
+                SourceFile = module.SourceFile,
                 ButtonContext = buttonContext.Count > 0 ? buttonContext : null
             });
         }

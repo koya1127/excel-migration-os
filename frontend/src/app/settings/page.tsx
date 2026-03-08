@@ -1,7 +1,8 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 
 interface UsageData {
   filesConverted: number;
@@ -9,15 +10,40 @@ interface UsageData {
   estimatedCost: number;
 }
 
-export default function SettingsPage() {
+function SettingsContent() {
   const { user, isLoaded } = useUser();
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState<string | null>(null);
+  const searchParams = useSearchParams();
 
   const meta = (user?.publicMetadata || {}) as Record<string, unknown>;
   const subscriptionStatus = meta.subscriptionStatus as string | undefined;
   const hasSubscription = subscriptionStatus === "active";
   const googleConnected = !!meta.googleConnected;
+
+  // Reload user metadata after Google OAuth callback redirect
+  useEffect(() => {
+    const google = searchParams.get("google");
+    const error = searchParams.get("error");
+
+    if (error) {
+      setGoogleStatus(
+        error === "token_exchange"
+          ? "Google認証に失敗しました。もう一度お試しください。"
+          : error === "missing_params"
+            ? "認証パラメータが不足しています。"
+            : `エラー: ${error}`
+      );
+      return;
+    }
+
+    if (google === "connected" && user) {
+      user.reload().then(() => {
+        setGoogleStatus("Google アカウントを連携しました！");
+      });
+    }
+  }, [searchParams, user]);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -134,6 +160,15 @@ export default function SettingsPage() {
           ログイン認証とは別に、ファイル操作の権限を許可する必要があります。
           変換後のファイルはあなた自身の Google アカウントに保存されます。
         </p>
+        {googleStatus && (
+          <div className={`mb-4 rounded-lg px-4 py-2 text-sm ${
+            googleStatus.includes("失敗") || googleStatus.includes("エラー")
+              ? "bg-red-50 text-red-700"
+              : "bg-green-50 text-green-700"
+          }`}>
+            {googleStatus}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
@@ -175,5 +210,17 @@ export default function SettingsPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-gray-500">読み込み中...</p>
+      </div>
+    }>
+      <SettingsContent />
+    </Suspense>
   );
 }

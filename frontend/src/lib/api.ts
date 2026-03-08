@@ -12,10 +12,15 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 async function getGoogleToken(): Promise<string | null> {
   try {
     const res = await fetch("/api/auth/google/token");
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      console.error("Google token取得失敗:", res.status, err);
+      return null;
+    }
     const data = await res.json();
     return data.accessToken || null;
-  } catch {
+  } catch (e) {
+    console.error("Google token取得エラー:", e);
     return null;
   }
 }
@@ -123,6 +128,7 @@ export interface ConvertResult {
   gasCode: string;
   status: string;
   error: string;
+  sourceFile: string;
   inputTokens: number;
   outputTokens: number;
 }
@@ -217,15 +223,27 @@ export async function convertSingle(request: ConvertRequest): Promise<ConvertRep
   return report;
 }
 
+export async function checkSubscription(): Promise<{ hasSubscription: boolean; subscriptionStatus?: string }> {
+  try {
+    const res = await fetch("/api/stripe/subscription");
+    if (!res.ok) return { hasSubscription: false };
+    return await res.json();
+  } catch {
+    return { hasSubscription: false };
+  }
+}
+
 async function reportUsage(inputTokens: number, outputTokens: number): Promise<void> {
   if (inputTokens + outputTokens <= 0) return;
-  try {
-    await fetch("/api/stripe/report-usage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ inputTokens, outputTokens }),
-    });
-  } catch {}
+  const res = await fetch("/api/stripe/report-usage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inputTokens, outputTokens }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    console.error("課金報告に失敗しました:", data?.error || res.statusText);
+  }
 }
 
 export async function uploadFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<UploadReport> {
@@ -267,5 +285,10 @@ export async function migrateFiles(files: File[], convertToSheets: boolean = tru
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || `Migrate failed: ${res.statusText}`);
   }
-  return res.json();
+  const report: MigrateReport = await res.json();
+  // Report usage for the conversion step
+  if (report.convert) {
+    await reportUsage(report.convert.totalInputTokens, report.convert.totalOutputTokens);
+  }
+  return report;
 }

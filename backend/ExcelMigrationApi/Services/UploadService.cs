@@ -105,6 +105,8 @@ public class UploadService
         }
     }
 
+    private const int MaxUploadConcurrency = 3;
+
     public async Task<UploadReport> UploadFiles(List<string> filePaths, bool convertToSheets, string? folderId, string googleToken)
     {
         var report = new UploadReport
@@ -114,12 +116,27 @@ public class UploadService
             ConvertedToSheets = convertToSheets
         };
 
-        foreach (var filePath in filePaths)
+        var semaphore = new SemaphoreSlim(MaxUploadConcurrency);
+        var tasks = filePaths.Select(async (filePath, index) =>
         {
-            var result = await UploadFile(filePath, convertToSheets, folderId, googleToken);
-            report.Files.Add(result);
+            await semaphore.WaitAsync();
+            try
+            {
+                return (Index: index, Result: await UploadFile(filePath, convertToSheets, folderId, googleToken));
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToList();
 
-            if (result.Status == "success")
+        var results = await Task.WhenAll(tasks);
+
+        foreach (var item in results.OrderBy(r => r.Index))
+        {
+            report.Files.Add(item.Result);
+
+            if (item.Result.Status == "success")
                 report.SuccessCount++;
             else
                 report.FailureCount++;
