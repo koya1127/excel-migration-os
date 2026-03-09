@@ -2,12 +2,14 @@ using ExcelMigrationApi.Models;
 using ExcelMigrationApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExcelMigrationApi.Controllers;
 
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("per-user")]
 public class ScanController : ControllerBase
 {
     private readonly ScanService _scanService;
@@ -17,8 +19,13 @@ public class ScanController : ControllerBase
         _scanService = scanService;
     }
 
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".xlsx", ".xlsm", ".xls", ".csv"
+    };
+
     [HttpPost]
-    [RequestSizeLimit(200 * 1024 * 1024)] // 200MB limit
+    [RequestSizeLimit(50 * 1024 * 1024)] // 50MB limit
     public async Task<ActionResult<ScanReport>> Scan(
         [FromForm] List<IFormFile> files,
         [FromForm] string groupBy = "none")
@@ -26,6 +33,30 @@ public class ScanController : ControllerBase
         if (files == null || files.Count == 0)
         {
             return BadRequest(new { error = "ファイルがアップロードされていません" });
+        }
+
+        // Validate file extensions
+        foreach (var file in files)
+        {
+            var ext = Path.GetExtension(file.FileName);
+            if (!AllowedExtensions.Contains(ext))
+            {
+                return BadRequest(new { error = $"サポートされていないファイル形式です: {ext}（.xlsx, .xlsm, .xls, .csv のみ対応）" });
+            }
+        }
+
+        if (files.Count > 100)
+        {
+            return BadRequest(new { error = "1回のリクエストでアップロードできるファイル数は最大100です" });
+        }
+
+        // Reject individual files over 30MB
+        foreach (var file in files)
+        {
+            if (file.Length > 30 * 1024 * 1024)
+            {
+                return BadRequest(new { error = $"ファイル「{file.FileName}」が30MBを超えています" });
+            }
         }
 
         // Validate groupBy parameter
@@ -40,14 +71,38 @@ public class ScanController : ControllerBase
 
         try
         {
-            // Save uploaded files to temp directory
+            // Save uploaded files preserving folder structure for subfolder grouping.
+            // The browser sends webkitRelativePath or D&D fullPath as the filename.
+            var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
             {
                 if (file.Length == 0) continue;
 
-                // Preserve original filename (sanitize path separators)
-                var fileName = Path.GetFileName(file.FileName);
-                var filePath = Path.Combine(tempDir, fileName);
+                // Sanitize: normalize separators, remove path traversal components
+                var relativePath = file.FileName.Replace('\\', '/');
+                relativePath = string.Join('/',
+                    relativePath.Split('/').Where(p => p != ".." && p != "." && !string.IsNullOrEmpty(p)));
+                if (string.IsNullOrEmpty(relativePath))
+                    relativePath = "unknown.xlsx";
+
+                // Deduplicate full relative paths
+                if (!usedPaths.Add(relativePath))
+                {
+                    var dir = Path.GetDirectoryName(relativePath)?.Replace('\\', '/') ?? "";
+                    var nameWithoutExt = Path.GetFileNameWithoutExtension(relativePath);
+                    var ext = Path.GetExtension(relativePath);
+                    var counter = 2;
+                    do
+                    {
+                        relativePath = string.IsNullOrEmpty(dir)
+                            ? $"{nameWithoutExt}_{counter}{ext}"
+                            : $"{dir}/{nameWithoutExt}_{counter}{ext}";
+                        counter++;
+                    } while (!usedPaths.Add(relativePath));
+                }
+
+                var filePath = Path.Combine(tempDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
 
                 await using var stream = new FileStream(filePath, FileMode.Create);
                 await file.CopyToAsync(stream);
@@ -60,8 +115,8 @@ public class ScanController : ControllerBase
             foreach (var filePath in excelFiles)
             {
                 var report = _scanService.AnalyzeFile(filePath);
-                // Replace temp path with original filename for cleaner output
-                report.Path = Path.GetFileName(report.Path);
+                // Use relative path from tempDir for subfolder grouping and display
+                report.Path = Path.GetRelativePath(tempDir, report.Path).Replace('\\', '/');
                 fileReports.Add(report);
             }
 

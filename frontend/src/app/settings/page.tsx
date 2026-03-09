@@ -57,7 +57,12 @@ function SettingsContent() {
     const res = await fetch("/api/auth/google");
     const data = await res.json();
     if (data.url) {
-      window.location.href = data.url;
+      try {
+        const url = new URL(data.url);
+        if (url.hostname.endsWith("google.com")) {
+          window.location.href = data.url;
+        }
+      } catch { /* invalid URL */ }
     }
   }
 
@@ -67,7 +72,12 @@ function SettingsContent() {
       const res = await fetch("/api/stripe/portal", { method: "POST" });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        try {
+          const url = new URL(data.url);
+          if (url.hostname.endsWith("stripe.com")) {
+            window.location.href = data.url;
+          }
+        } catch { /* invalid URL */ }
       }
     } catch {
       alert("エラーが発生しました");

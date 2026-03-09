@@ -7,7 +7,13 @@ namespace ExcelMigrationApi.Services;
 
 public class UploadService
 {
-    private readonly HttpClient _httpClient = new();
+    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(2) };
+    private readonly ILogger<UploadService> _logger;
+
+    public UploadService(ILogger<UploadService> logger)
+    {
+        _logger = logger;
+    }
 
     public async Task<UploadResult> UploadFile(string filePath, bool convertToSheets, string? folderId, string googleToken)
     {
@@ -18,7 +24,9 @@ public class UploadService
             // Build Drive API metadata
             var metadata = new Dictionary<string, object>
             {
-                ["name"] = Path.GetFileNameWithoutExtension(fileName)
+                // When converting to Sheets, use name without extension (Google adds its own).
+                // When keeping original format, preserve the full filename with extension.
+                ["name"] = convertToSheets ? Path.GetFileNameWithoutExtension(fileName) : fileName
             };
 
             if (convertToSheets)
@@ -44,8 +52,8 @@ public class UploadService
                 _ => "application/octet-stream"
             };
 
-            // Use multipart upload to Google Drive API
-            var fileBytes = await File.ReadAllBytesAsync(filePath);
+            // Use multipart upload to Google Drive API (streaming to avoid loading entire file into memory)
+            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920);
 
             using var content = new MultipartContent("related");
 
@@ -53,8 +61,8 @@ public class UploadService
             var metadataPart = new StringContent(metadataJson, Encoding.UTF8, "application/json");
             content.Add(metadataPart);
 
-            // Part 2: file content
-            var filePart = new ByteArrayContent(fileBytes);
+            // Part 2: file content (streamed)
+            var filePart = new StreamContent(fileStream);
             filePart.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
             content.Add(filePart);
 
@@ -68,11 +76,12 @@ public class UploadService
 
             if (!response.IsSuccessStatusCode)
             {
+                _logger.LogError("Drive API error {StatusCode} for file {FileName}", (int)response.StatusCode, fileName);
                 return new UploadResult
                 {
                     FileName = fileName,
                     Status = "error",
-                    Error = $"Drive API error {(int)response.StatusCode}: {responseBody}"
+                    Error = $"Google Driveへのアップロードに失敗しました（ステータス: {(int)response.StatusCode}）"
                 };
             }
 
@@ -106,6 +115,7 @@ public class UploadService
     }
 
     private const int MaxUploadConcurrency = 3;
+    private readonly SemaphoreSlim _uploadSemaphore = new(MaxUploadConcurrency);
 
     public async Task<UploadReport> UploadFiles(List<string> filePaths, bool convertToSheets, string? folderId, string googleToken)
     {
@@ -116,17 +126,16 @@ public class UploadService
             ConvertedToSheets = convertToSheets
         };
 
-        var semaphore = new SemaphoreSlim(MaxUploadConcurrency);
         var tasks = filePaths.Select(async (filePath, index) =>
         {
-            await semaphore.WaitAsync();
+            await _uploadSemaphore.WaitAsync();
             try
             {
                 return (Index: index, Result: await UploadFile(filePath, convertToSheets, folderId, googleToken));
             }
             finally
             {
-                semaphore.Release();
+                _uploadSemaphore.Release();
             }
         }).ToList();
 

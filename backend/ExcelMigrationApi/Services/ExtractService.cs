@@ -1,8 +1,6 @@
 using System.IO.Compression;
 using System.Xml.Linq;
 using ExcelMigrationApi.Models;
-using OfficeOpenXml;
-using OfficeOpenXml.VBA;
 
 namespace ExcelMigrationApi.Services;
 
@@ -59,30 +57,19 @@ public class ExtractService
 
     private void ExtractVbaModules(string filePath, string fileName, ExtractReport report)
     {
-        using var package = new ExcelPackage(new FileInfo(filePath));
+        var modules = VbaExtractor.ExtractModules(filePath);
+        if (modules.Count == 0) return;
 
-        if (package.Workbook.VbaProject == null)
-            return;
-
-        foreach (var module in package.Workbook.VbaProject.Modules)
+        foreach (var module in modules)
         {
             var code = module.Code ?? string.Empty;
             var codeLines = string.IsNullOrWhiteSpace(code) ? 0 : code.Split('\n').Length;
-
-            var moduleType = module.Type switch
-            {
-                eModuleType.Module => "Standard",
-                eModuleType.Class => "Class",
-                eModuleType.Document => "Document",
-                eModuleType.Designer => "Form",
-                _ => module.Type.ToString()
-            };
 
             report.Modules.Add(new VbaModule
             {
                 SourceFile = fileName,
                 ModuleName = module.Name,
-                ModuleType = moduleType,
+                ModuleType = module.Type,
                 CodeLines = codeLines,
                 Code = code
             });

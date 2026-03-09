@@ -214,35 +214,36 @@ export default function MigratePage() {
     addFiles(Array.from(files));
   }, [addFiles]);
 
-  const readEntries = async (entry: FileSystemEntry): Promise<File[]> => {
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        (entry as FileSystemFileEntry).file((f) => resolve([f]));
-      });
-    }
-    if (entry.isDirectory) {
-      const reader = (entry as FileSystemDirectoryEntry).createReader();
-      const entries = await new Promise<FileSystemEntry[]>((resolve) => {
-        const all: FileSystemEntry[] = [];
-        const readBatch = () => {
-          reader.readEntries((batch) => {
-            if (batch.length === 0) { resolve(all); return; }
-            all.push(...batch);
-            readBatch();
-          });
-        };
-        readBatch();
-      });
-      const nested = await Promise.all(entries.map(readEntries));
-      return nested.flat();
-    }
-    return [];
-  };
-
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+
+      const readEntries = async (entry: FileSystemEntry): Promise<File[]> => {
+        if (entry.isFile) {
+          return new Promise((resolve) => {
+            (entry as FileSystemFileEntry).file((f) => resolve([f]));
+          });
+        }
+        if (entry.isDirectory) {
+          const reader = (entry as FileSystemDirectoryEntry).createReader();
+          const entries = await new Promise<FileSystemEntry[]>((resolve) => {
+            const all: FileSystemEntry[] = [];
+            const readBatch = () => {
+              reader.readEntries((batch) => {
+                if (batch.length === 0) { resolve(all); return; }
+                all.push(...batch);
+                readBatch();
+              });
+            };
+            readBatch();
+          });
+          const nested = await Promise.all(entries.map(readEntries));
+          return nested.flat();
+        }
+        return [];
+      };
+
       const items = e.dataTransfer.items;
       if (items) {
         const entries = Array.from(items)

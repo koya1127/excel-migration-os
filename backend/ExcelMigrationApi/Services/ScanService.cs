@@ -2,7 +2,7 @@ using System.IO.Compression;
 using ExcelMigrationApi.Models;
 using NPOI.HSSF.UserModel;
 using NPOI.SS.UserModel;
-using OfficeOpenXml;
+using NPOI.XSSF.UserModel;
 
 namespace ExcelMigrationApi.Services;
 
@@ -99,22 +99,19 @@ public class ScanService
 
         try
         {
-            using var package = new ExcelPackage(fileInfo);
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            var workbook = new XSSFWorkbook(fs);
 
-            report.SheetCount = package.Workbook.Worksheets.Count;
+            report.SheetCount = workbook.NumberOfSheets;
 
-            // Count VBA modules
-            try
+            // Count VBA modules via VbaExtractor
+            if (hasMacro)
             {
-                if (hasMacro && package.Workbook.VbaProject != null)
-                {
-                    report.VbaModuleCount = package.Workbook.VbaProject.Modules.Count;
-                }
+                try { report.VbaModuleCount = VbaExtractor.CountModules(filePath); } catch { }
             }
-            catch { }
 
             // Named ranges
-            try { report.NamedRangeCount = package.Workbook.Names.Count; } catch { }
+            try { report.NamedRangeCount = workbook.NumberOfNames; } catch { }
 
             // Walk all cells to count formulas
             int formulaCount = 0;
@@ -122,25 +119,23 @@ public class ScanService
             int externalLinkCount = 0;
             var incompatibleFound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var worksheet in package.Workbook.Worksheets)
+            for (int s = 0; s < workbook.NumberOfSheets; s++)
             {
-                // Count named ranges per sheet too
-                try { report.NamedRangeCount += worksheet.Names.Count; } catch { }
+                var sheet = workbook.GetSheetAt(s);
+                if (sheet == null) continue;
 
-                if (worksheet.Dimension == null) continue;
-
-                var startRow = worksheet.Dimension.Start.Row;
-                var endRow = worksheet.Dimension.End.Row;
-                var startCol = worksheet.Dimension.Start.Column;
-                var endCol = worksheet.Dimension.End.Column;
-
-                for (int row = startRow; row <= endRow; row++)
+                for (int r = sheet.FirstRowNum; r <= sheet.LastRowNum; r++)
                 {
-                    for (int col = startCol; col <= endCol; col++)
+                    var row = sheet.GetRow(r);
+                    if (row == null) continue;
+
+                    for (int c = row.FirstCellNum; c < row.LastCellNum; c++)
                     {
-                        var cell = worksheet.Cells[row, col];
-                        var formula = cell.Formula;
-                        if (string.IsNullOrEmpty(formula)) continue;
+                        var cell = row.GetCell(c);
+                        if (cell == null || cell.CellType != CellType.Formula) continue;
+
+                        string formula;
+                        try { formula = cell.CellFormula; } catch { continue; }
 
                         formulaCount++;
                         var upper = formula.ToUpperInvariant();

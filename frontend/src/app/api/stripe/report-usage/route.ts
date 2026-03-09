@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ reported: totalTokens });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: `Failed to report usage: ${message}` }, { status: 500 });
+    console.error("[report-usage] Error:", message);
+    return NextResponse.json({ error: "使用量の記録に失敗しました" }, { status: 500 });
   }
 }

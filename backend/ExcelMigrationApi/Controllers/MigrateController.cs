@@ -1,43 +1,65 @@
+using System.Security.Cryptography;
+using System.Text;
+using ExcelMigrationApi.Filters;
 using ExcelMigrationApi.Models;
 using ExcelMigrationApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExcelMigrationApi.Controllers;
 
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("convert")]
 public class MigrateController : ControllerBase
 {
+    private const int MaxModulesPerRequest = 50;
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".xlsx", ".xlsm", ".xls", ".csv"
+    };
+
     private readonly ExtractService _extractService;
     private readonly ConvertService _convertService;
     private readonly UploadService _uploadService;
     private readonly DeployService _deployService;
+    private readonly StripeUsageService _stripeUsageService;
+    private readonly ClerkService _clerkService;
+    private readonly ILogger<MigrateController> _logger;
 
     public MigrateController(
         ExtractService extractService,
         ConvertService convertService,
         UploadService uploadService,
-        DeployService deployService)
+        DeployService deployService,
+        StripeUsageService stripeUsageService,
+        ClerkService clerkService,
+        ILogger<MigrateController> logger)
     {
         _extractService = extractService;
         _convertService = convertService;
         _uploadService = uploadService;
         _deployService = deployService;
+        _stripeUsageService = stripeUsageService;
+        _clerkService = clerkService;
+        _logger = logger;
     }
 
     /// <summary>
     /// End-to-end migration: upload -> extract -> convert -> deploy
     /// </summary>
     [HttpPost]
-    [RequestSizeLimit(200 * 1024 * 1024)]
+    [RequireSubscription]
+    [RequestSizeLimit(50 * 1024 * 1024)] // 50MB total (down from 200MB)
     public async Task<ActionResult<MigrateReport>> Migrate(
         [FromForm] List<IFormFile> files,
         [FromForm] bool convertToSheets = true,
         [FromForm] string? folderId = null)
     {
-        var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var googleToken = !string.IsNullOrEmpty(userId) ? await _clerkService.GetGoogleToken(userId) : null;
         if (string.IsNullOrEmpty(googleToken))
         {
             return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });
@@ -46,6 +68,25 @@ public class MigrateController : ControllerBase
         if (files == null || files.Count == 0)
         {
             return BadRequest(new { error = "ファイルがアップロードされていません" });
+        }
+
+        if (files.Count > 100)
+        {
+            return BadRequest(new { error = "1回のリクエストでアップロードできるファイル数は最大100です" });
+        }
+
+        // Validate file extensions and sizes
+        foreach (var file in files)
+        {
+            var ext = Path.GetExtension(file.FileName);
+            if (!AllowedExtensions.Contains(ext))
+            {
+                return BadRequest(new { error = $"サポートされていないファイル形式です: {ext}（.xlsx, .xlsm, .xls, .csv のみ対応）" });
+            }
+            if (file.Length > 30 * 1024 * 1024)
+            {
+                return BadRequest(new { error = $"ファイル「{file.FileName}」が30MBを超えています" });
+            }
         }
 
         var migrateReport = new MigrateReport
@@ -58,13 +99,27 @@ public class MigrateController : ControllerBase
 
         try
         {
-            // Save uploaded files to temp directory
+            // Save uploaded files to temp directory (deduplicate names to prevent overwrite)
             var filePaths = new List<string>();
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
             {
                 if (file.Length == 0) continue;
 
                 var fileName = Path.GetFileName(file.FileName);
+                // If same basename already exists, prefix with a counter to avoid overwrite
+                if (!usedNames.Add(fileName))
+                {
+                    var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+                    var ext = Path.GetExtension(fileName);
+                    var counter = 2;
+                    do
+                    {
+                        fileName = $"{nameWithoutExt}_{counter}{ext}";
+                        counter++;
+                    } while (!usedNames.Add(fileName));
+                }
+
                 var filePath = Path.Combine(tempDir, fileName);
 
                 await using var stream = new FileStream(filePath, FileMode.Create);
@@ -92,12 +147,6 @@ public class MigrateController : ControllerBase
                     GeneratedUtc = DateTime.UtcNow.ToString("o"),
                     Total = 0
                 };
-                migrateReport.Deploy = new DeployReport
-                {
-                    GeneratedUtc = DateTime.UtcNow.ToString("o"),
-                    Status = "skipped",
-                    Error = "変換するVBAモジュールがありません"
-                };
                 return Ok(migrateReport);
             }
 
@@ -117,55 +166,91 @@ public class MigrateController : ControllerBase
                     VbaCode = module.Code,
                     ModuleName = module.ModuleName,
                     ModuleType = module.ModuleType,
+                    SourceFile = module.SourceFile,
                     ButtonContext = buttonContext.Count > 0 ? buttonContext : null
                 });
+            }
+
+            if (convertRequests.Count > MaxModulesPerRequest)
+            {
+                return BadRequest(new { error = $"1回のリクエストで変換できるモジュール数は最大{MaxModulesPerRequest}です（検出: {convertRequests.Count}）" });
             }
 
             var convertReport = await _convertService.ConvertBatch(convertRequests);
             migrateReport.Convert = convertReport;
 
-            // Step 4: Deploy GAS to the first successfully uploaded spreadsheet
-            var firstSuccess = uploadReport.Files.FirstOrDefault(f => f.Status == "success");
-            if (firstSuccess == null || string.IsNullOrEmpty(firstSuccess.DriveFileId))
+            // Report usage — block response if billing fails
+            var totalTokens = convertReport.TotalInputTokens + convertReport.TotalOutputTokens;
+            if (totalTokens > 0)
             {
-                migrateReport.Deploy = new DeployReport
+                if (HttpContext.Items.TryGetValue("ClerkUserMeta", out var metaObj)
+                    && metaObj is ClerkService.ClerkUserMeta meta
+                    && !string.IsNullOrEmpty(meta.StripeCustomerId))
                 {
-                    GeneratedUtc = DateTime.UtcNow.ToString("o"),
-                    Status = "skipped",
-                    Error = "デプロイ先のスプレッドシートがありません"
-                };
-                return Ok(migrateReport);
+                    try
+                    {
+                        var idempotencyKey = BuildIdempotencyKey("migrate", convertRequests);
+                        await _stripeUsageService.ReportUsage(meta.StripeCustomerId, totalTokens, idempotencyKey);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Stripe usage report failed during migrate");
+                        return StatusCode(502, new { error = "課金処理に失敗しました。変換は完了していますが、再度お試しください。" });
+                    }
+                }
+                else
+                {
+                    return StatusCode(502, new { error = "課金情報が取得できません" });
+                }
             }
 
+            // Step 4: Deploy GAS per source file to its corresponding spreadsheet
             var successfulConversions = convertReport.Results
                 .Where(r => r.Status == "success")
                 .ToList();
 
             if (successfulConversions.Count == 0)
             {
-                migrateReport.Deploy = new DeployReport
-                {
-                    GeneratedUtc = DateTime.UtcNow.ToString("o"),
-                    SpreadsheetId = firstSuccess.DriveFileId,
-                    Status = "skipped",
-                    Error = "デプロイする変換結果がありません"
-                };
                 return Ok(migrateReport);
             }
 
-            var deployRequest = new DeployRequest
-            {
-                SpreadsheetId = firstSuccess.DriveFileId,
-                GasFiles = successfulConversions.Select(r => new GasFile
-                {
-                    Name = r.ModuleName,
-                    Source = r.GasCode,
-                    Type = "SERVER_JS"
-                }).ToList()
-            };
+            // Build a mapping from source file name (without extension) to uploaded spreadsheet
+            // Use GroupBy + First to handle duplicate names (e.g. report.xlsx and report.xlsm)
+            var uploadMap = uploadReport.Files
+                .Where(f => f.Status == "success" && !string.IsNullOrEmpty(f.DriveFileId))
+                .GroupBy(f => Path.GetFileNameWithoutExtension(f.FileName), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-            var deployReport = await _deployService.Deploy(deployRequest, googleToken);
-            migrateReport.Deploy = deployReport;
+            // Group converted modules by source file
+            var modulesByFile = successfulConversions
+                .GroupBy(r => Path.GetFileNameWithoutExtension(r.SourceFile ?? ""))
+                .ToList();
+
+            foreach (var group in modulesByFile)
+            {
+                if (!uploadMap.TryGetValue(group.Key, out var uploadResult))
+                {
+                    // Fallback: use first successful upload if no exact match
+                    uploadResult = uploadReport.Files.FirstOrDefault(f => f.Status == "success");
+                }
+
+                if (uploadResult == null || string.IsNullOrEmpty(uploadResult.DriveFileId))
+                    continue;
+
+                var deployRequest = new DeployRequest
+                {
+                    SpreadsheetId = uploadResult.DriveFileId,
+                    GasFiles = group.Select(r => new GasFile
+                    {
+                        Name = r.ModuleName,
+                        Source = r.GasCode,
+                        Type = "SERVER_JS"
+                    }).ToList()
+                };
+
+                var deployReport = await _deployService.Deploy(deployRequest, googleToken);
+                migrateReport.Deploys.Add(deployReport);
+            }
 
             return Ok(migrateReport);
         }
@@ -173,5 +258,18 @@ public class MigrateController : ControllerBase
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
+    }
+
+    private static string BuildIdempotencyKey(string prefix, List<ConvertRequest> requests)
+    {
+        using var sha = SHA256.Create();
+        var sb = new StringBuilder();
+        foreach (var r in requests)
+        {
+            sb.Append(r.ModuleName).Append(':').Append(r.VbaCode?.Length ?? 0).Append(':');
+            sb.Append(r.VbaCode ?? "");
+        }
+        var hash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
+        return $"{prefix}-{hash}";
     }
 }

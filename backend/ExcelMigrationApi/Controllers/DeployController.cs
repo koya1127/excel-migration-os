@@ -1,26 +1,33 @@
+using ExcelMigrationApi.Filters;
 using ExcelMigrationApi.Models;
 using ExcelMigrationApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExcelMigrationApi.Controllers;
 
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("per-user")]
 public class DeployController : ControllerBase
 {
     private readonly DeployService _deployService;
+    private readonly ClerkService _clerkService;
 
-    public DeployController(DeployService deployService)
+    public DeployController(DeployService deployService, ClerkService clerkService)
     {
         _deployService = deployService;
+        _clerkService = clerkService;
     }
 
     [HttpPost]
+    [RequireSubscription]
     public async Task<ActionResult<DeployReport>> Deploy([FromBody] DeployRequest request)
     {
-        var googleToken = Request.Headers["X-Google-Token"].FirstOrDefault();
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var googleToken = !string.IsNullOrEmpty(userId) ? await _clerkService.GetGoogleToken(userId) : null;
         if (string.IsNullOrEmpty(googleToken))
         {
             return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });

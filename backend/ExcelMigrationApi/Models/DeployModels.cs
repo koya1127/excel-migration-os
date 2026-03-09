@@ -61,5 +61,5 @@ public class MigrateReport
     public UploadReport? Upload { get; set; }
     public ExtractReport? Extract { get; set; }
     public ConvertReport? Convert { get; set; }
-    public DeployReport? Deploy { get; set; }
+    public List<DeployReport> Deploys { get; set; } = new();
 }

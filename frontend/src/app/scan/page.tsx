@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, Fragment } from "react";
 import { scanFiles, type ScanReport, type FileReport, type GroupSummary } from "@/lib/api";
 
 function formatBytes(bytes: number): string {
@@ -74,7 +74,7 @@ function noteTag(text: string) {
   return cls;
 }
 
-function FileTable({ files, nested }: { files: FileReport[]; nested?: boolean }) {
+function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
   const [sortKey, setSortKey] = useState<SortKey>("riskScore");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -102,21 +102,20 @@ function FileTable({ files, nested }: { files: FileReport[]; nested?: boolean })
     return sortDir === "asc" ? cmp : -cmp;
   });
 
-  const S = (props: Omit<Parameters<typeof SortHeader>[0], "currentKey" | "currentDir" | "onSort">) =>
-    <SortHeader {...props} currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />;
+  const sortProps = { currentKey: sortKey, currentDir: sortDir, onSort: handleSort };
 
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-left text-xs font-medium uppercase text-gray-500">
-            <S label="ファイル名" sortKey="name" />
+            <SortHeader label="ファイル名" sortKey="name" {...sortProps} />
             <th className="px-4 py-3">形式</th>
-            <S label="サイズ" sortKey="sizeBytes" />
-            <S label="マクロ" sortKey="hasMacro" title="VBAマクロの有無とモジュール数" />
-            <S label="数式" sortKey="formulaCount" title="セル内の数式（=で始まるセル）の数" />
-            <S label="Sheets非対応" sortKey="incompatibleFunctionCount" title="Google Sheetsに存在しない、または動作が異なる関数の数" />
-            <S label="移行リスク" sortKey="riskScore" title="移行の難しさ（マクロ・外部リンク・非対応関数などから算出）" />
+            <SortHeader label="サイズ" sortKey="sizeBytes" {...sortProps} />
+            <SortHeader label="マクロ" sortKey="hasMacro" title="VBAマクロの有無とモジュール数" {...sortProps} />
+            <SortHeader label="数式" sortKey="formulaCount" title="セル内の数式（=で始まるセル）の数" {...sortProps} />
+            <SortHeader label="Sheets非対応" sortKey="incompatibleFunctionCount" title="Google Sheetsに存在しない、または動作が異なる関数の数" {...sortProps} />
+            <SortHeader label="移行リスク" sortKey="riskScore" title="移行の難しさ（マクロ・外部リンク・非対応関数などから算出）" {...sortProps} />
             <th className="px-4 py-3">詳細</th>
           </tr>
         </thead>
@@ -209,9 +208,8 @@ function GroupTable({ groups, files }: { groups: GroupSummary[]; files: FileRepo
         </thead>
         <tbody className="divide-y divide-gray-100">
           {groups.map((g, i) => (
-            <>
+            <Fragment key={i}>
               <tr
-                key={`group-${i}`}
                 className="hover:bg-gray-50 cursor-pointer"
                 onClick={() => toggle(i)}
               >
@@ -246,7 +244,7 @@ function GroupTable({ groups, files }: { groups: GroupSummary[]; files: FileRepo
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -269,7 +267,14 @@ export default function ScanPage() {
       /\.(xls|xlsx|xlsm)$/i.test(f.name)
     );
     if (accepted.length > 0) {
-      setSelectedFiles((prev) => [...prev, ...accepted]);
+      setSelectedFiles((prev) => {
+        const combined = [...prev, ...accepted];
+        if (combined.length > 100) {
+          setError("ファイル数が100件を超えています。100件以下にしてください。");
+          return prev;
+        }
+        return combined;
+      });
     }
   }, []);
 
@@ -278,36 +283,43 @@ export default function ScanPage() {
     addExcelFiles(Array.from(files));
   }, [addExcelFiles]);
 
-  // Recursively read directory entries from drag & drop
-  const readEntries = async (entry: FileSystemEntry): Promise<File[]> => {
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        (entry as FileSystemFileEntry).file((f) => resolve([f]));
-      });
-    }
-    if (entry.isDirectory) {
-      const reader = (entry as FileSystemDirectoryEntry).createReader();
-      const entries = await new Promise<FileSystemEntry[]>((resolve) => {
-        const all: FileSystemEntry[] = [];
-        const readBatch = () => {
-          reader.readEntries((batch) => {
-            if (batch.length === 0) { resolve(all); return; }
-            all.push(...batch);
-            readBatch();
-          });
-        };
-        readBatch();
-      });
-      const nested = await Promise.all(entries.map(readEntries));
-      return nested.flat();
-    }
-    return [];
-  };
-
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+
+      // Recursively read directory entries from drag & drop
+      // Preserves folder structure by encoding fullPath into the File name
+      const readEntries = async (entry: FileSystemEntry): Promise<File[]> => {
+        if (entry.isFile) {
+          return new Promise((resolve) => {
+            (entry as FileSystemFileEntry).file((f) => {
+              // Encode relative path into file name so backend can reconstruct folder structure
+              const relativePath = entry.fullPath.replace(/^\//, "");
+              const fileWithPath = new File([f], relativePath, { type: f.type, lastModified: f.lastModified });
+              resolve([fileWithPath]);
+            });
+          });
+        }
+        if (entry.isDirectory) {
+          const reader = (entry as FileSystemDirectoryEntry).createReader();
+          const entries = await new Promise<FileSystemEntry[]>((resolve) => {
+            const all: FileSystemEntry[] = [];
+            const readBatch = () => {
+              reader.readEntries((batch) => {
+                if (batch.length === 0) { resolve(all); return; }
+                all.push(...batch);
+                readBatch();
+              });
+            };
+            readBatch();
+          });
+          const nested = await Promise.all(entries.map(readEntries));
+          return nested.flat();
+        }
+        return [];
+      };
+
       const items = e.dataTransfer.items;
       if (items) {
         const entries = Array.from(items)

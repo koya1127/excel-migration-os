@@ -22,7 +22,12 @@ export default function PricingPage() {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        try {
+          const url = new URL(data.url);
+          if (url.hostname.endsWith("stripe.com")) {
+            window.location.href = data.url;
+          }
+        } catch { /* invalid URL, ignore */ }
       }
     } catch {
       alert("エラーが発生しました。もう一度お試しください。");

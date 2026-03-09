@@ -9,12 +9,14 @@ namespace ExcelMigrationApi.Services;
 public class ConvertService
 {
     private readonly HttpClient _httpClient;
+    private readonly ILogger<ConvertService> _logger;
     private readonly string _apiKey;
     private const string AnthropicApiUrl = "https://api.anthropic.com/v1/messages";
     private const string ModelLarge = "claude-sonnet-4-6";
     private const string ModelSmall = "claude-haiku-4-5-20251001";
     private const int SmallModuleThreshold = 50; // lines
     private const int MaxConcurrency = 5;
+    private readonly SemaphoreSlim _concurrencySemaphore = new(MaxConcurrency);
 
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
@@ -30,9 +32,10 @@ Rules:
 - CRITICAL: The output must be syntactically valid JavaScript. Never truncate code.
 - If the VBA is too complex to fully convert, output a simplified working stub with TODO comments";
 
-    public ConvertService(IConfiguration config)
+    public ConvertService(IConfiguration config, ILogger<ConvertService> logger)
     {
-        _httpClient = new HttpClient();
+        _logger = logger;
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         _apiKey = config["ANTHROPIC_API_KEY"]
             ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
             ?? string.Empty;
@@ -98,12 +101,13 @@ Rules:
 
             if (!response.IsSuccessStatusCode)
             {
+                _logger.LogError("Anthropic API error {StatusCode} for module {Module}", (int)response.StatusCode, request.ModuleName);
                 return new ConvertResult
                 {
                     ModuleName = request.ModuleName,
                     SourceFile = request.SourceFile,
                     Status = "error",
-                    Error = $"API error {(int)response.StatusCode}: {responseBody}"
+                    Error = $"AI変換APIでエラーが発生しました（ステータス: {(int)response.StatusCode}）"
                 };
             }
 
@@ -157,18 +161,17 @@ Rules:
             Total = requests.Count
         };
 
-        // Process in parallel with concurrency limit
-        var semaphore = new SemaphoreSlim(MaxConcurrency);
+        // Process in parallel with class-level concurrency limit
         var tasks = requests.Select(async (request, index) =>
         {
-            await semaphore.WaitAsync();
+            await _concurrencySemaphore.WaitAsync();
             try
             {
                 return (Index: index, Result: await ConvertModule(request));
             }
             finally
             {
-                semaphore.Release();
+                _concurrencySemaphore.Release();
             }
         }).ToList();
 

@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5269";
+// Backend API calls are proxied through Next.js rewrites (next.config.ts).
+// Use empty string so all calls go to the same origin (e.g. /api/scan → rewrite → backend).
+const API_BASE = "";
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
@@ -9,30 +11,8 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function getGoogleToken(): Promise<string | null> {
-  try {
-    const res = await fetch("/api/auth/google/token");
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      console.error("Google token取得失敗:", res.status, err);
-      return null;
-    }
-    const data = await res.json();
-    return data.accessToken || null;
-  } catch (e) {
-    console.error("Google token取得エラー:", e);
-    return null;
-  }
-}
-
-async function getAuthHeadersWithGoogle(): Promise<Record<string, string>> {
-  const headers = await getAuthHeaders();
-  const googleToken = await getGoogleToken();
-  if (googleToken) {
-    headers["X-Google-Token"] = googleToken;
-  }
-  return headers;
-}
+// Google token is now fetched server-side by the backend from Clerk privateMetadata.
+// No need to pass X-Google-Token from the browser (eliminates XSS token theft risk).
 
 export interface FileReport {
   path: string;
@@ -77,7 +57,8 @@ export interface ScanReport {
 export async function scanFiles(files: File[], groupBy: string = "subfolder"): Promise<ScanReport> {
   const authHeaders = await getAuthHeaders();
   const formData = new FormData();
-  files.forEach(f => formData.append("files", f));
+  // Preserve folder structure: use webkitRelativePath (folder picker) or name (D&D with encoded path)
+  files.forEach(f => formData.append("files", f, f.webkitRelativePath || f.name));
   formData.append("groupBy", groupBy);
 
   const res = await fetch(`${API_BASE}/api/scan`, {
@@ -184,7 +165,7 @@ export interface MigrateReport {
   upload: UploadReport;
   extract: ExtractReport;
   convert: ConvertReport;
-  deploy: DeployReport;
+  deploys: DeployReport[];
 }
 
 // API functions
@@ -204,10 +185,11 @@ export async function convertBatch(extractReport: ExtractReport): Promise<Conver
     headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify(extractReport),
   });
-  if (!res.ok) throw new Error(`Convert failed: ${res.statusText}`);
-  const report: ConvertReport = await res.json();
-  await reportUsage(report.totalInputTokens, report.totalOutputTokens);
-  return report;
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Convert failed: ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export async function convertSingle(request: ConvertRequest): Promise<ConvertReport> {
@@ -217,37 +199,31 @@ export async function convertSingle(request: ConvertRequest): Promise<ConvertRep
     headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify([request]),
   });
-  if (!res.ok) throw new Error(`Convert failed: ${res.statusText}`);
-  const report: ConvertReport = await res.json();
-  await reportUsage(report.totalInputTokens, report.totalOutputTokens);
-  return report;
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || `Convert failed: ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export async function checkSubscription(): Promise<{ hasSubscription: boolean; subscriptionStatus?: string }> {
   try {
-    const res = await fetch("/api/stripe/subscription");
-    if (!res.ok) return { hasSubscription: false };
-    return await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clerk = (window as any).Clerk;
+    if (!clerk?.user) return { hasSubscription: false };
+    const meta = clerk.user.publicMetadata as Record<string, unknown> | undefined;
+    const status = meta?.subscriptionStatus as string | undefined;
+    return {
+      hasSubscription: status === "active",
+      subscriptionStatus: status,
+    };
   } catch {
     return { hasSubscription: false };
   }
 }
 
-async function reportUsage(inputTokens: number, outputTokens: number): Promise<void> {
-  if (inputTokens + outputTokens <= 0) return;
-  const res = await fetch("/api/stripe/report-usage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ inputTokens, outputTokens }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    console.error("課金報告に失敗しました:", data?.error || res.statusText);
-  }
-}
-
 export async function uploadFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<UploadReport> {
-  const authHeaders = await getAuthHeadersWithGoogle();
+  const authHeaders = await getAuthHeaders();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
@@ -261,7 +237,7 @@ export async function uploadFiles(files: File[], convertToSheets: boolean = true
 }
 
 export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Promise<DeployReport> {
-  const authHeaders = await getAuthHeadersWithGoogle();
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/api/deploy`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },
@@ -275,7 +251,7 @@ export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Pro
 }
 
 export async function migrateFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<MigrateReport> {
-  const authHeaders = await getAuthHeadersWithGoogle();
+  const authHeaders = await getAuthHeaders();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
@@ -285,10 +261,6 @@ export async function migrateFiles(files: File[], convertToSheets: boolean = tru
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || `Migrate failed: ${res.statusText}`);
   }
-  const report: MigrateReport = await res.json();
-  // Report usage for the conversion step
-  if (report.convert) {
-    await reportUsage(report.convert.totalInputTokens, report.convert.totalOutputTokens);
-  }
-  return report;
+  // Usage is now reported server-side in MigrateController
+  return res.json();
 }

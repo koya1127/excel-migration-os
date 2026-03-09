@@ -7,8 +7,14 @@ namespace ExcelMigrationApi.Services;
 
 public class DeployService
 {
-    private readonly HttpClient _httpClient = new();
+    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly ILogger<DeployService> _logger;
     private const string ScriptApiBase = "https://script.googleapis.com/v1/projects";
+
+    public DeployService(ILogger<DeployService> logger)
+    {
+        _logger = logger;
+    }
 
     public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
     {
@@ -31,8 +37,9 @@ public class DeployService
             var createRes = await SendRequest(HttpMethod.Post, ScriptApiBase, createBody, googleToken);
             if (!createRes.IsSuccess)
             {
+                _logger.LogError("Create Apps Script project failed for spreadsheet {SpreadsheetId}", request.SpreadsheetId);
                 report.Status = "error";
-                report.Error = $"Create project failed: {createRes.Body}";
+                report.Error = "Apps Scriptプロジェクトの作成に失敗しました";
                 return report;
             }
 
@@ -98,12 +105,14 @@ public class DeployService
                     if (excludedFiles.Count > 0)
                     {
                         // Partial success - some files were excluded
+                        _logger.LogWarning("Partial deploy: {Count} files excluded for spreadsheet {SpreadsheetId}", excludedFiles.Count, request.SpreadsheetId);
                         report.Status = "partial";
-                        report.Error = $"{excludedFiles.Count} ファイルを構文エラーのため除外: {string.Join(", ", excludedFiles)}。最終エラー: {updateRes.Body}";
+                        report.Error = $"{excludedFiles.Count} ファイルを構文エラーのため除外: {string.Join(", ", excludedFiles)}";
                         return report;
                     }
+                    _logger.LogError("Deploy update content failed for spreadsheet {SpreadsheetId}", request.SpreadsheetId);
                     report.Status = "error";
-                    report.Error = $"Update content failed: {updateRes.Body}";
+                    report.Error = "GASコードのデプロイに失敗しました";
                     return report;
                 }
 
@@ -136,8 +145,9 @@ public class DeployService
             if (!versionRes.IsSuccess)
             {
                 // Content updated but version creation failed - partial success
+                _logger.LogWarning("Version creation failed for script {ScriptId}", report.ScriptId);
                 report.Status = "partial";
-                report.Error = $"Content pushed but version creation failed: {versionRes.Body}";
+                report.Error = "コードは更新されましたが、バージョンの作成に失敗しました";
                 return report;
             }
 
