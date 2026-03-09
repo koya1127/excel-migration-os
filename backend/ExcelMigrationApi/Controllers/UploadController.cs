@@ -9,7 +9,7 @@ namespace ExcelMigrationApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-[EnableRateLimiting("per-user")]
+[EnableRateLimiting("upload-deploy")]
 public class UploadController : ControllerBase
 {
     private readonly UploadService _uploadService;
@@ -38,6 +38,12 @@ public class UploadController : ControllerBase
         if (string.IsNullOrEmpty(googleToken))
         {
             return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });
+        }
+
+        // Validate folderId format (Google Drive folder IDs: alphanumeric, hyphens, underscores, 10-128 chars)
+        if (!string.IsNullOrEmpty(folderId) && !System.Text.RegularExpressions.Regex.IsMatch(folderId, @"^[a-zA-Z0-9_-]{10,128}$"))
+        {
+            return BadRequest(new { error = "フォルダIDの形式が不正です（英数字・ハイフン・アンダースコア、10〜128文字）" });
         }
 
         if (files == null || files.Count == 0)

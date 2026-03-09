@@ -18,7 +18,8 @@ public class MigrateController : ControllerBase
     private const int MaxModulesPerRequest = 50;
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".xlsx", ".xlsm", ".xls", ".csv"
+        ".xlsx", ".xlsm", ".csv"
+        // .xls excluded: VBA extraction not supported after EPPlus removal
     };
 
     private readonly ExtractService _extractService;
@@ -63,6 +64,12 @@ public class MigrateController : ControllerBase
         if (string.IsNullOrEmpty(googleToken))
         {
             return BadRequest(new { error = "Googleアカウントが未連携です。設定画面からGoogleアカウントを連携してください。" });
+        }
+
+        // Validate folderId format (Google Drive folder IDs: alphanumeric, hyphens, underscores, 10-128 chars)
+        if (!string.IsNullOrEmpty(folderId) && !System.Text.RegularExpressions.Regex.IsMatch(folderId, @"^[a-zA-Z0-9_-]{10,128}$"))
+        {
+            return BadRequest(new { error = "フォルダIDの形式が不正です（英数字・ハイフン・アンダースコア、10〜128文字）" });
         }
 
         if (files == null || files.Count == 0)
@@ -214,27 +221,32 @@ public class MigrateController : ControllerBase
                 return Ok(migrateReport);
             }
 
-            // Build a mapping from source file name (without extension) to uploaded spreadsheet
-            // Use GroupBy + First to handle duplicate names (e.g. report.xlsx and report.xlsm)
+            // Build a mapping from source file name (WITH extension) to uploaded spreadsheet
+            // Using full filename prevents basename collisions (e.g. report.xlsx vs report.xlsm)
             var uploadMap = uploadReport.Files
                 .Where(f => f.Status == "success" && !string.IsNullOrEmpty(f.DriveFileId))
-                .GroupBy(f => Path.GetFileNameWithoutExtension(f.FileName), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(f => f.FileName, f => f, StringComparer.OrdinalIgnoreCase);
 
-            // Group converted modules by source file
+            // Group converted modules by source file (full name with extension)
             var modulesByFile = successfulConversions
-                .GroupBy(r => Path.GetFileNameWithoutExtension(r.SourceFile ?? ""))
+                .GroupBy(r => r.SourceFile ?? "")
                 .ToList();
 
             foreach (var group in modulesByFile)
             {
                 if (!uploadMap.TryGetValue(group.Key, out var uploadResult))
                 {
-                    // Fallback: use first successful upload if no exact match
-                    uploadResult = uploadReport.Files.FirstOrDefault(f => f.Status == "success");
+                    // No matching upload found — skip to prevent deploying to the wrong spreadsheet
+                    _logger.LogWarning("Deploy skipped: no matching upload for source file '{SourceFile}'", group.Key);
+                    migrateReport.Deploys.Add(new DeployReport
+                    {
+                        Status = "skipped",
+                        Error = $"アップロード先が見つかりません: {group.Key}"
+                    });
+                    continue;
                 }
 
-                if (uploadResult == null || string.IsNullOrEmpty(uploadResult.DriveFileId))
+                if (string.IsNullOrEmpty(uploadResult.DriveFileId))
                     continue;
 
                 var deployRequest = new DeployRequest

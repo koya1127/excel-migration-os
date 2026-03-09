@@ -1,4 +1,5 @@
 using System.Text.Encodings.Web;
+using System.Text.Unicode;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -51,8 +52,8 @@ builder.Services.AddCors(options =>
     options.AddDefaultPolicy(policy =>
     {
         policy.WithOrigins(allowedOrigins.ToArray())
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+              .WithHeaders("Authorization", "Content-Type")
+              .WithMethods("GET", "POST", "OPTIONS");
     });
 });
 
@@ -104,6 +105,19 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
         });
     });
+
+    // Strict policy for upload/deploy endpoints: 10 requests per minute
+    options.AddPolicy("upload-deploy", context =>
+    {
+        var userId = context.User?.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+        return RateLimitPartition.GetTokenBucketLimiter($"upload-deploy-{userId}", _ => new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 10,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            TokensPerPeriod = 10,
+            QueueLimit = 0,
+        });
+    });
 });
 
 // Add controllers with camelCase JSON
@@ -111,8 +125,40 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-        options.JsonSerializerOptions.Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+        options.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
     });
+
+// Application Insights telemetry (set APPLICATIONINSIGHTS_CONNECTION_STRING in production)
+builder.Services.AddApplicationInsightsTelemetry();
+
+// Register named HttpClients with per-service timeouts
+builder.Services.AddHttpClient("Anthropic", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(3);
+});
+builder.Services.AddHttpClient("GoogleDrive", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(2);
+});
+builder.Services.AddHttpClient("AppsScript", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddHttpClient("Clerk", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.BaseAddress = new Uri("https://api.clerk.com/v1/");
+    var clerkSecretKey = Environment.GetEnvironmentVariable("CLERK_SECRET_KEY") ?? "";
+    client.DefaultRequestHeaders.Add("Authorization", $"Bearer {clerkSecretKey}");
+});
+builder.Services.AddHttpClient("GoogleOAuth", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHttpClient("Stripe", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 
 // Register services
 builder.Services.AddSingleton<ScanService>();

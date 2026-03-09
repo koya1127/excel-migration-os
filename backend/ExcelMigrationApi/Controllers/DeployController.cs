@@ -10,7 +10,7 @@ namespace ExcelMigrationApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-[EnableRateLimiting("per-user")]
+[EnableRateLimiting("upload-deploy")]
 public class DeployController : ControllerBase
 {
     private readonly DeployService _deployService;
@@ -24,6 +24,7 @@ public class DeployController : ControllerBase
 
     [HttpPost]
     [RequireSubscription]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB for JSON body
     public async Task<ActionResult<DeployReport>> Deploy([FromBody] DeployRequest request)
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;

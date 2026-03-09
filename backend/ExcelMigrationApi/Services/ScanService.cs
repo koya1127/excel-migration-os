@@ -8,6 +8,13 @@ namespace ExcelMigrationApi.Services;
 
 public class ScanService
 {
+    private readonly ILogger<ScanService> _logger;
+
+    public ScanService(ILogger<ScanService> logger)
+    {
+        _logger = logger;
+    }
+
     private static readonly HashSet<string> ExcelExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".xls", ".xlsx", ".xlsm"
@@ -178,7 +185,8 @@ public class ScanService
         }
         catch (Exception ex)
         {
-            report.Notes.Add($"分析エラー: {ex.Message}");
+            _logger.LogError(ex, "Scan analysis failed for {FilePath}", filePath);
+            report.Notes.Add("ファイル分析中にエラーが発生しました");
             report.RiskScore = 50;
         }
 
@@ -273,8 +281,9 @@ public class ScanService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Legacy .xls scan failed for {FilePath}", filePath);
             report.RiskScore = 30;
-            report.Notes = new List<string> { "旧形式(.xls)", $"分析エラー: {ex.Message}" };
+            report.Notes = new List<string> { "旧形式(.xls)", "ファイル分析中にエラーが発生しました" };
         }
 
         return report;

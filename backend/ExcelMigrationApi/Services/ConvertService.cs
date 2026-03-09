@@ -8,7 +8,7 @@ namespace ExcelMigrationApi.Services;
 
 public class ConvertService
 {
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ConvertService> _logger;
     private readonly string _apiKey;
     private const string AnthropicApiUrl = "https://api.anthropic.com/v1/messages";
@@ -16,7 +16,7 @@ public class ConvertService
     private const string ModelSmall = "claude-haiku-4-5-20251001";
     private const int SmallModuleThreshold = 50; // lines
     private const int MaxConcurrency = 5;
-    private readonly SemaphoreSlim _concurrencySemaphore = new(MaxConcurrency);
+    private static readonly SemaphoreSlim _concurrencySemaphore = new(MaxConcurrency);
 
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
@@ -32,10 +32,10 @@ Rules:
 - CRITICAL: The output must be syntactically valid JavaScript. Never truncate code.
 - If the VBA is too complex to fully convert, output a simplified working stub with TODO comments";
 
-    public ConvertService(IConfiguration config, ILogger<ConvertService> logger)
+    public ConvertService(IConfiguration config, ILogger<ConvertService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+        _httpClientFactory = httpClientFactory;
         _apiKey = config["ANTHROPIC_API_KEY"]
             ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
             ?? string.Empty;
@@ -50,7 +50,7 @@ Rules:
                 ModuleName = request.ModuleName,
                 SourceFile = request.SourceFile,
                 Status = "error",
-                Error = "ANTHROPIC_API_KEY is not configured"
+                Error = "サーバー設定エラーが発生しました"
             };
         }
 
@@ -96,7 +96,8 @@ Rules:
             httpRequest.Headers.Add("x-api-key", _apiKey);
             httpRequest.Headers.Add("anthropic-version", "2023-06-01");
 
-            var response = await _httpClient.SendAsync(httpRequest);
+            var httpClient = _httpClientFactory.CreateClient("Anthropic");
+            var response = await httpClient.SendAsync(httpRequest);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -143,12 +144,13 @@ Rules:
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "ConvertModule failed for {ModuleName}", request.ModuleName);
             return new ConvertResult
             {
                 ModuleName = request.ModuleName,
                 SourceFile = request.SourceFile,
                 Status = "error",
-                Error = ex.Message
+                Error = "VBA変換中にエラーが発生しました"
             };
         }
     }

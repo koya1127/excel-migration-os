@@ -32,6 +32,7 @@ public class ConvertController : ControllerBase
     /// </summary>
     [HttpPost]
     [RequireSubscription]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB for JSON body
     public async Task<ActionResult<ConvertReport>> Convert([FromBody] List<ConvertRequest> requests)
     {
         if (requests == null || requests.Count == 0)
@@ -57,6 +58,7 @@ public class ConvertController : ControllerBase
     /// </summary>
     [HttpPost("batch")]
     [RequireSubscription]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB for JSON body
     public async Task<ActionResult<ConvertReport>> ConvertBatch([FromBody] ExtractReport extractReport)
     {
         if (extractReport == null || extractReport.Modules.Count == 0)

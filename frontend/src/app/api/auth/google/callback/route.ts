@@ -88,17 +88,25 @@ export async function GET(req: NextRequest) {
     const currentPrivate = (user.privateMetadata || {}) as Record<string, unknown>;
 
     console.log("[Google OAuth] Updating Clerk metadata for user:", userId);
+    // Only overwrite refresh_token if Google actually returned one.
+    // Google only returns refresh_token on the first consent or when prompt=consent
+    // is used AND the user has revoked prior access. Re-linking without a new
+    // refresh_token must NOT wipe the existing one.
+    const privateUpdate: Record<string, unknown> = {
+      ...currentPrivate,
+      googleAccessToken: tokens.access_token,
+      googleTokenExpiry: Date.now() + tokens.expires_in * 1000,
+    };
+    if (tokens.refresh_token) {
+      privateUpdate.googleRefreshToken = tokens.refresh_token;
+    }
+
     await clerk.users.updateUserMetadata(userId, {
       publicMetadata: {
         ...currentPublic,
         googleConnected: true,
       },
-      privateMetadata: {
-        ...currentPrivate,
-        googleAccessToken: tokens.access_token,
-        googleRefreshToken: tokens.refresh_token,
-        googleTokenExpiry: Date.now() + tokens.expires_in * 1000,
-      },
+      privateMetadata: privateUpdate,
     });
 
     console.log("[Google OAuth] Metadata updated, redirecting to /settings?google=connected");

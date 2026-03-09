@@ -6,6 +6,13 @@ namespace ExcelMigrationApi.Services;
 
 public class ExtractService
 {
+    private readonly ILogger<ExtractService> _logger;
+
+    public ExtractService(ILogger<ExtractService> logger)
+    {
+        _logger = logger;
+    }
+
     public ExtractReport Extract(List<string> filePaths)
     {
         var report = new ExtractReport
@@ -17,12 +24,26 @@ public class ExtractService
         foreach (var filePath in filePaths)
         {
             var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            var fileName = Path.GetFileName(filePath);
+
+            if (ext == ".xls")
+            {
+                // .xls VBA extraction is not supported (EPPlus removed, NPOI lacks VBA support)
+                report.Modules.Add(new VbaModule
+                {
+                    SourceFile = fileName,
+                    ModuleName = "(unsupported)",
+                    ModuleType = "Warning",
+                    Code = ".xls 形式のVBA抽出は現在サポートされていません。.xlsm に変換してから再度お試しください。",
+                    CodeLines = 0
+                });
+                continue;
+            }
+
             if (ext != ".xlsm")
             {
                 continue;
             }
-
-            var fileName = Path.GetFileName(filePath);
 
             // Extract VBA modules via EPPlus
             try
@@ -31,12 +52,13 @@ public class ExtractService
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "VBA extraction failed for {FileName}", fileName);
                 report.Modules.Add(new VbaModule
                 {
                     SourceFile = fileName,
                     ModuleName = "(error)",
                     ModuleType = "Error",
-                    Code = $"VBA extraction failed: {ex.Message}"
+                    Code = "VBA抽出中にエラーが発生しました"
                 });
             }
 

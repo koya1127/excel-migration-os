@@ -7,13 +7,14 @@ namespace ExcelMigrationApi.Services;
 
 public class DeployService
 {
-    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<DeployService> _logger;
     private const string ScriptApiBase = "https://script.googleapis.com/v1/projects";
 
-    public DeployService(ILogger<DeployService> logger)
+    public DeployService(ILogger<DeployService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
@@ -155,8 +156,9 @@ public class DeployService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Deploy failed for spreadsheet {SpreadsheetId}", request.SpreadsheetId);
             report.Status = "error";
-            report.Error = ex.Message;
+            report.Error = "GASデプロイ中にエラーが発生しました";
         }
 
         return report;
@@ -182,7 +184,8 @@ public class DeployService
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", googleToken);
         request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request);
+        var httpClient = _httpClientFactory.CreateClient("AppsScript");
+        var response = await httpClient.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         return (response.IsSuccessStatusCode, body);
     }

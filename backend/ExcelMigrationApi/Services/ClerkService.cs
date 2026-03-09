@@ -10,34 +10,41 @@ namespace ExcelMigrationApi.Services;
 /// </summary>
 public class ClerkService
 {
-    private readonly HttpClient _httpClient;
-    private readonly HttpClient _googleHttpClient; // Dedicated client for Google token refresh (no Clerk auth headers)
-    private readonly string _secretKey;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _googleClientId;
     private readonly string _googleClientSecret;
 
-    // Per-user lock to prevent concurrent token refresh races
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _refreshLocks = new();
-
-    public ClerkService()
+    // Per-user lock to prevent concurrent token refresh races.
+    // Entries are cleaned up periodically to prevent unbounded growth.
+    private static readonly ConcurrentDictionary<string, (SemaphoreSlim Lock, DateTime LastUsed)> _refreshLocks = new();
+    private static readonly Timer _cleanupTimer = new(_ =>
     {
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        _googleHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        _secretKey = Environment.GetEnvironmentVariable("CLERK_SECRET_KEY") ?? string.Empty;
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        foreach (var kvp in _refreshLocks)
+        {
+            if (kvp.Value.LastUsed < cutoff && kvp.Value.Lock.CurrentCount == 1)
+            {
+                _refreshLocks.TryRemove(kvp.Key, out var _removed);
+            }
+        }
+    }, null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
+
+    public ClerkService(IHttpClientFactory httpClientFactory)
+    {
+        _httpClientFactory = httpClientFactory;
         _googleClientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID") ?? string.Empty;
         _googleClientSecret = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_SECRET") ?? string.Empty;
-        _httpClient.BaseAddress = new Uri("https://api.clerk.com/v1/");
-        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_secretKey}");
     }
 
     public async Task<ClerkUserMeta?> GetUserMeta(string userId)
     {
-        if (string.IsNullOrEmpty(_secretKey) || string.IsNullOrEmpty(userId))
+        if (string.IsNullOrEmpty(userId))
             return null;
 
         try
         {
-            var res = await _httpClient.GetAsync($"users/{userId}");
+            var httpClient = _httpClientFactory.CreateClient("Clerk");
+            var res = await httpClient.GetAsync($"users/{userId}");
             if (!res.IsSuccessStatusCode) return null;
 
             var body = await res.Content.ReadAsStringAsync();
@@ -63,12 +70,13 @@ public class ClerkService
     /// </summary>
     public async Task<string?> GetGoogleToken(string userId)
     {
-        if (string.IsNullOrEmpty(_secretKey) || string.IsNullOrEmpty(userId))
+        if (string.IsNullOrEmpty(userId))
             return null;
 
         try
         {
-            var res = await _httpClient.GetAsync($"users/{userId}");
+            var httpClient = _httpClientFactory.CreateClient("Clerk");
+            var res = await httpClient.GetAsync($"users/{userId}");
             if (!res.IsSuccessStatusCode) return null;
 
             var body = await res.Content.ReadAsStringAsync();
@@ -89,12 +97,14 @@ public class ClerkService
                 return accessToken;
 
             // Acquire per-user lock to prevent concurrent refresh
-            var userLock = _refreshLocks.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
-            await userLock.WaitAsync();
+            var entry = _refreshLocks.GetOrAdd(userId, _ => (new SemaphoreSlim(1, 1), DateTime.UtcNow));
+            _refreshLocks[userId] = (entry.Lock, DateTime.UtcNow); // Update last-used timestamp
+            await entry.Lock.WaitAsync();
             try
             {
                 // Re-read metadata in case another request already refreshed
-                var res2 = await _httpClient.GetAsync($"users/{userId}");
+                var httpClient2 = _httpClientFactory.CreateClient("Clerk");
+                var res2 = await httpClient2.GetAsync($"users/{userId}");
                 if (res2.IsSuccessStatusCode)
                 {
                     var body2 = await res2.Content.ReadAsStringAsync();
@@ -128,7 +138,7 @@ public class ClerkService
             }
             finally
             {
-                userLock.Release();
+                entry.Lock.Release();
             }
         }
         catch
@@ -147,7 +157,8 @@ public class ClerkService
             ["grant_type"] = "refresh_token",
         });
 
-        var res = await _googleHttpClient.PostAsync("https://oauth2.googleapis.com/token", content);
+        var googleHttpClient = _httpClientFactory.CreateClient("GoogleOAuth");
+        var res = await googleHttpClient.PostAsync("https://oauth2.googleapis.com/token", content);
         if (!res.IsSuccessStatusCode) return null;
 
         var body = await res.Content.ReadAsStringAsync();
@@ -173,7 +184,8 @@ public class ClerkService
         using var request = new HttpRequestMessage(HttpMethod.Patch, $"users/{userId}/metadata");
         request.Content = content;
 
-        await _httpClient.SendAsync(request);
+        var httpClient = _httpClientFactory.CreateClient("Clerk");
+        await httpClient.SendAsync(request);
     }
 
     private static string? GetString(Dictionary<string, JsonElement>? dict, string key)

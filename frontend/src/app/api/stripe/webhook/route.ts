@@ -8,9 +8,13 @@ export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  if (!sig || !webhookSecret) {
-    console.error("[Stripe Webhook] Missing signature or webhook secret");
-    return NextResponse.json({ received: true }, { status: 200 });
+  if (!webhookSecret) {
+    console.error("[Stripe Webhook] STRIPE_WEBHOOK_SECRET is not configured — rejecting all webhooks");
+    return NextResponse.json({ error: "Webhook not configured" }, { status: 500 });
+  }
+  if (!sig) {
+    console.error("[Stripe Webhook] Missing stripe-signature header");
+    return NextResponse.json({ error: "Missing signature" }, { status: 400 });
   }
 
   let event;

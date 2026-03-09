@@ -7,12 +7,13 @@ namespace ExcelMigrationApi.Services;
 
 public class UploadService
 {
-    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(2) };
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<UploadService> _logger;
 
-    public UploadService(ILogger<UploadService> logger)
+    public UploadService(ILogger<UploadService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<UploadResult> UploadFile(string filePath, bool convertToSheets, string? folderId, string googleToken)
@@ -71,7 +72,8 @@ public class UploadService
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", googleToken);
             request.Content = content;
 
-            var response = await _httpClient.SendAsync(request);
+            var httpClient = _httpClientFactory.CreateClient("GoogleDrive");
+            var response = await httpClient.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -105,17 +107,18 @@ public class UploadService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "UploadFile failed for {FileName}", fileName);
             return new UploadResult
             {
                 FileName = fileName,
                 Status = "error",
-                Error = ex.Message
+                Error = "Google Driveへのアップロード中にエラーが発生しました"
             };
         }
     }
 
     private const int MaxUploadConcurrency = 3;
-    private readonly SemaphoreSlim _uploadSemaphore = new(MaxUploadConcurrency);
+    private static readonly SemaphoreSlim _uploadSemaphore = new(MaxUploadConcurrency);
 
     public async Task<UploadReport> UploadFiles(List<string> filePaths, bool convertToSheets, string? folderId, string googleToken)
     {

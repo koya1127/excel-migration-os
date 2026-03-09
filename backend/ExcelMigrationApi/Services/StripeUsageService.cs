@@ -8,17 +8,17 @@ namespace ExcelMigrationApi.Services;
 /// </summary>
 public class StripeUsageService
 {
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _secretKey;
     private readonly string _meterEventName;
     private readonly string _meterId;
 
     private readonly ILogger<StripeUsageService> _logger;
 
-    public StripeUsageService(ILogger<StripeUsageService> logger)
+    public StripeUsageService(ILogger<StripeUsageService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        _httpClientFactory = httpClientFactory;
         _secretKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY") ?? string.Empty;
         _meterEventName = Environment.GetEnvironmentVariable("STRIPE_METER_EVENT_NAME") ?? "ai_tokens";
         _meterId = Environment.GetEnvironmentVariable("STRIPE_METER_ID") ?? string.Empty;
@@ -54,7 +54,8 @@ public class StripeUsageService
             ["timestamp"] = timestamp.ToString(),
         });
 
-        var response = await _httpClient.SendAsync(request);
+        var httpClient = _httpClientFactory.CreateClient("Stripe");
+        var response = await httpClient.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Stripe usage report failed with status {StatusCode} for customer {CustomerId}", response.StatusCode, stripeCustomerId);
@@ -91,7 +92,8 @@ public class StripeUsageService
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _secretKey);
 
-        var response = await _httpClient.SendAsync(request);
+        var httpClient = _httpClientFactory.CreateClient("Stripe");
+        var response = await httpClient.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Stripe usage query failed with status {StatusCode} for customer {CustomerId}", response.StatusCode, stripeCustomerId);
