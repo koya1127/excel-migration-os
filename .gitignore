@@ -36,4 +36,5 @@ node_modules/
 
 # C# / .NET
 bin/
+bin-*/
 obj/

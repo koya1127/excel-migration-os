@@ -72,5 +72,6 @@ jobs:
               CLERK_SECRET_KEY=secretref:clerk-secret-key \
               STRIPE_SECRET_KEY=secretref:stripe-secret-key \
               STRIPE_METER_EVENT_NAME="${{ secrets.STRIPE_METER_EVENT_NAME }}" \
+              STRIPE_METER_ID="${{ secrets.STRIPE_METER_ID }}" \
               ASPNETCORE_ENVIRONMENT=Production \
-              FRONTEND_ORIGIN=https://excel-migration-os.vercel.app
+              FRONTEND_ORIGIN=https://frontend-self-ten-98.vercel.app
