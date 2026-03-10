@@ -6,16 +6,8 @@ import type { NextConfig } from "next";
 const resolvedBackendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5269";
 
 const nextConfig: NextConfig = {
-  // Proxy JSON-only backend API calls through Next.js rewrites.
-  // File upload endpoints (scan, extract, upload, migrate) call the backend directly
-  // via NEXT_PUBLIC_API_URL to avoid Vercel's 4.5MB body size limit.
-  async rewrites() {
-    return [
-      { source: "/api/convert", destination: `${resolvedBackendUrl}/api/convert` },
-      { source: "/api/convert/:path*", destination: `${resolvedBackendUrl}/api/convert/:path*` },
-      { source: "/api/deploy", destination: `${resolvedBackendUrl}/api/deploy` },
-    ];
-  },
+  // All backend API calls go directly to NEXT_PUBLIC_API_URL from the browser.
+  // No rewrites needed — avoids Vercel's 4.5MB body limit and 30s timeout.
   async headers() {
     return [
       {

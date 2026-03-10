@@ -74,8 +74,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuer = true,
             ValidIssuer = $"https://{clerkDomain}",
-            ValidateAudience = true,
-            ValidAudience = clerkDomain,
+            ValidateAudience = false, // Clerk v2 JWTs use "azp" not "aud"
             ValidateLifetime = true,
             NameClaimType = "sub",
         };

@@ -1,0 +1,76 @@
+name: Deploy Backend to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**']
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/excel-migration-api
+  RESOURCE_GROUP: excel-migration-api_group
+  CONTAINER_APP_NAME: excel-migration-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/ExcelMigrationApi
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Make package public
+        run: |
+          gh api --method PUT /user/packages/container/excel-migration-api/visibility \
+            -f visibility=public || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set Container App secrets
+        run: |
+          az containerapp secret set \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets \
+              anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
+              clerk-domain="${{ secrets.CLERK_DOMAIN }}" \
+              clerk-secret-key="${{ secrets.CLERK_SECRET_KEY }}" \
+              stripe-secret-key="${{ secrets.STRIPE_SECRET_KEY }}"
+
+      - name: Deploy to Container Apps
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars \
+              ANTHROPIC_API_KEY=secretref:anthropic-api-key \
+              CLERK_DOMAIN=secretref:clerk-domain \
+              CLERK_SECRET_KEY=secretref:clerk-secret-key \
+              STRIPE_SECRET_KEY=secretref:stripe-secret-key \
+              STRIPE_METER_EVENT_NAME="${{ secrets.STRIPE_METER_EVENT_NAME }}" \
+              ASPNETCORE_ENVIRONMENT=Production \
+              FRONTEND_ORIGIN=https://excel-migration-os.vercel.app
