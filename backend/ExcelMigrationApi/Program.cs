@@ -29,6 +29,13 @@ foreach (var envPath in new[]
 
 // Fail-fast: verify required environment variables at startup
 var requiredEnvVars = new[] { "CLERK_DOMAIN", "CLERK_SECRET_KEY", "ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_METER_EVENT_NAME", "STRIPE_METER_ID" };
+// FRONTEND_ORIGIN is required in production for CORS (browser→backend direct calls for file uploads)
+var aspEnv = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
+if (aspEnv != "Development" && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FRONTEND_ORIGIN")))
+{
+    Console.Error.WriteLine("FATAL: FRONTEND_ORIGIN is required in production. Set it to the frontend URL (e.g. https://your-app.vercel.app).");
+    Environment.Exit(1);
+}
 var missingVars = requiredEnvVars.Where(v => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(v))).ToList();
 if (missingVars.Count > 0)
 {
@@ -128,8 +135,11 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
     });
 
-// Application Insights telemetry (set APPLICATIONINSIGHTS_CONNECTION_STRING in production)
-builder.Services.AddApplicationInsightsTelemetry();
+// Application Insights telemetry (optional — set APPLICATIONINSIGHTS_CONNECTION_STRING in production)
+if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")))
+{
+    builder.Services.AddApplicationInsightsTelemetry();
+}
 
 // Register named HttpClients with per-service timeouts
 builder.Services.AddHttpClient("Anthropic", client =>

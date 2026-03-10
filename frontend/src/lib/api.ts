@@ -4,6 +4,15 @@
 const API_BASE = "";
 const FILE_API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
+function requireFileApiBase(): string {
+  if (!FILE_API_BASE) {
+    if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
+      throw new Error("NEXT_PUBLIC_API_URL が設定されていません。バックエンドAPIに接続できません。");
+    }
+  }
+  return FILE_API_BASE;
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -63,7 +72,7 @@ export async function scanFiles(files: File[], groupBy: string = "subfolder"): P
   files.forEach(f => formData.append("files", f, f.webkitRelativePath || f.name));
   formData.append("groupBy", groupBy);
 
-  const res = await fetch(`${FILE_API_BASE}/api/scan`, {
+  const res = await fetch(`${requireFileApiBase()}/api/scan`, {
     method: "POST",
     headers: { ...authHeaders },
     body: formData,
@@ -175,7 +184,7 @@ export async function extractFiles(files: File[]): Promise<ExtractReport> {
   const authHeaders = await getAuthHeaders();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
-  const res = await fetch(`${FILE_API_BASE}/api/extract`, { method: "POST", headers: { ...authHeaders }, body: formData });
+  const res = await fetch(`${requireFileApiBase()}/api/extract`, { method: "POST", headers: { ...authHeaders }, body: formData });
   if (!res.ok) throw new Error(`Extract failed: ${res.statusText}`);
   return res.json();
 }
@@ -230,7 +239,7 @@ export async function uploadFiles(files: File[], convertToSheets: boolean = true
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
   if (folderId) formData.append("folderId", folderId);
-  const res = await fetch(`${FILE_API_BASE}/api/upload`, { method: "POST", headers: { ...authHeaders }, body: formData });
+  const res = await fetch(`${requireFileApiBase()}/api/upload`, { method: "POST", headers: { ...authHeaders }, body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || `Upload failed: ${res.statusText}`);
@@ -258,7 +267,7 @@ export async function migrateFiles(files: File[], convertToSheets: boolean = tru
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
   if (folderId) formData.append("folderId", folderId);
-  const res = await fetch(`${FILE_API_BASE}/api/migrate`, { method: "POST", headers: { ...authHeaders }, body: formData });
+  const res = await fetch(`${requireFileApiBase()}/api/migrate`, { method: "POST", headers: { ...authHeaders }, body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.error || `Migrate failed: ${res.statusText}`);

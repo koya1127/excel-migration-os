@@ -15,7 +15,10 @@ export async function POST() {
   }
 
   const stripe = getStripe();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    return NextResponse.json({ error: "NEXT_PUBLIC_APP_URL is not configured" }, { status: 500 });
+  }
 
   // Reuse existing Stripe customer to prevent duplicate customers
   const clerk = await clerkClient();

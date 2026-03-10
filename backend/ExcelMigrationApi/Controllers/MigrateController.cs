@@ -88,7 +88,7 @@ public class MigrateController : ControllerBase
             var ext = Path.GetExtension(file.FileName);
             if (!AllowedExtensions.Contains(ext))
             {
-                return BadRequest(new { error = $"サポートされていないファイル形式です: {ext}（.xlsx, .xlsm, .xls, .csv のみ対応）" });
+                return BadRequest(new { error = $"サポートされていないファイル形式です: {ext}（.xlsx, .xlsm, .csv のみ対応）" });
             }
             if (file.Length > 30 * 1024 * 1024)
             {

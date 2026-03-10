@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || (process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google/callback` : "http://localhost:3000/api/auth/google/callback");
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || (process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google/callback` : "");
 
 const SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
@@ -26,6 +26,10 @@ export async function GET() {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!GOOGLE_REDIRECT_URI) {
+    return NextResponse.json({ error: "GOOGLE_REDIRECT_URI or NEXT_PUBLIC_APP_URL is not configured" }, { status: 500 });
   }
 
   // Generate cryptographic random state to prevent CSRF
