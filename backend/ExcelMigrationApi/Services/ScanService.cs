@@ -398,7 +398,7 @@ public class ScanService
             var groupFiles = indices.Select(i => files[i]).ToList();
 
             int macroCount = groupFiles.Count(f => f.HasMacro);
-            int totalVba = groupFiles.Sum(f => f.VbaModuleCount);
+            int totalVba = groupFiles.Sum(f => f.VbaModuleCount ?? 0);
             double avgRisk = groupFiles.Average(f => f.RiskScore);
             int maxRisk = groupFiles.Max(f => f.RiskScore);
             int totalFormulas = groupFiles.Sum(f => f.FormulaCount);
