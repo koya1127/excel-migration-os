@@ -346,6 +346,7 @@ export default function ScanPage() {
     if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
+    setReport(null);
     try {
       const result = await scanFiles(selectedFiles, groupBy);
       setReport(result);
