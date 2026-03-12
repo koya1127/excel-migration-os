@@ -29,8 +29,9 @@ export interface FileReport {
   sizeBytes: number;
   modifiedUtc: string;
   hasMacro: boolean;
-  vbaModuleCount: number;
-  vbaTotalCodeLength: number;
+  vbaModuleCount: number | null;
+  vbaTotalCodeLength: number | null;
+  analysisFailed: boolean;
   sheetCount: number;
   formulaCount: number;
   volatileFormulaCount: number;

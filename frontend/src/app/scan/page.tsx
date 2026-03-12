@@ -117,7 +117,7 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
     switch (sortKey) {
       case "name": va = a.path.toLowerCase(); vb = b.path.toLowerCase(); break;
       case "sizeBytes": va = a.sizeBytes; vb = b.sizeBytes; break;
-      case "hasMacro": va = a.vbaModuleCount; vb = b.vbaModuleCount; break;
+      case "hasMacro": va = a.vbaModuleCount ?? -1; vb = b.vbaModuleCount ?? -1; break;
       case "formulaCount": va = a.formulaCount; vb = b.formulaCount; break;
       case "incompatibleFunctionCount": va = a.incompatibleFunctionCount; vb = b.incompatibleFunctionCount; break;
       case "riskScore": va = a.riskScore; vb = b.riskScore; break;
@@ -155,7 +155,9 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                 <td className="px-4 py-3 text-gray-500 text-xs">{f.extension}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatBytes(f.sizeBytes)}</td>
                 <td className="px-4 py-3">
-                  {f.hasMacro ? (
+                  {f.analysisFailed && f.hasMacro ? (
+                    <span className="text-xs text-gray-400">解析不可</span>
+                  ) : f.hasMacro && f.vbaModuleCount != null ? (
                     <InfoPopup trigger={
                       <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-700">
                         {f.vbaModuleCount}個
@@ -171,7 +173,9 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">
-                  {f.formulaCount > 0 ? (
+                  {f.analysisFailed ? (
+                    <span className="text-xs text-gray-400">解析不可</span>
+                  ) : f.formulaCount > 0 ? (
                     <InfoPopup trigger={<span className="border-b border-dotted border-gray-400">{f.formulaCount.toLocaleString()}</span>}>
                       <span className="block font-bold mb-2">数式の数</span>
                       <span className="block mb-2">このファイルには <span className="font-mono text-amber-300">{f.formulaCount.toLocaleString()}個</span> の数式セルがあります。</span>
@@ -180,7 +184,9 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                   ) : <span className="text-gray-300">-</span>}
                 </td>
                 <td className="px-4 py-3">
-                  {f.incompatibleFunctionCount > 0 ? (
+                  {f.analysisFailed ? (
+                    <span className="text-xs text-gray-400">解析不可</span>
+                  ) : f.incompatibleFunctionCount > 0 ? (
                     <InfoPopup trigger={
                       <span className="inline-flex items-center rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700">
                         {f.incompatibleFunctionCount}個
@@ -196,8 +202,8 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                 </td>
                 <td className="px-4 py-3">
                   <InfoPopup trigger={<RiskBar score={f.riskScore} />}>
-                    <span className="block font-bold mb-2">移行リスク: {f.riskScore}/100</span>
-                    <span className="block mb-2">{f.riskScore < 40 ? "低リスク — そのまま移行できる可能性が高いです。" : f.riskScore < 70 ? "中リスク — マクロの変換や一部関数の手動対応が必要です。" : "高リスク — 非対応関数・外部リンク・複雑なマクロがあり、手動対応が多く必要です。"}</span>
+                    <span className="block font-bold mb-2">{f.analysisFailed ? "移行リスク: 推定50/100（解析不可）" : `移行リスク: ${f.riskScore}/100`}</span>
+                    <span className="block mb-2">{f.analysisFailed ? "ファイルが複雑なため正確なリスク算出ができませんでした。実際の移行時に詳細を確認します。" : f.riskScore < 40 ? "低リスク — そのまま移行できる可能性が高いです。" : f.riskScore < 70 ? "中リスク — マクロの変換や一部関数の手動対応が必要です。" : "高リスク — 非対応関数・外部リンク・複雑なマクロがあり、手動対応が多く必要です。"}</span>
                     <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">移行リスクはマクロの有無、非対応関数の数、外部リンク、数式の量などから自動算出したスコアです。高いほどGoogle Sheetsへの移行が難しくなります。</span>
                   </InfoPopup>
                 </td>

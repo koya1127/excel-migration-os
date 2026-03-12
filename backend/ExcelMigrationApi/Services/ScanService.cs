@@ -120,7 +120,11 @@ public class ScanService
                     report.VbaModuleCount = vbaModules.Count;
                     report.VbaTotalCodeLength = vbaModules.Sum(m => m.Code?.Length ?? 0);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "VBA extraction failed for {FilePath}", filePath);
+                    // Leave VbaModuleCount/VbaTotalCodeLength as null to indicate failure
+                }
             }
 
             // Named ranges
@@ -192,7 +196,8 @@ public class ScanService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Scan analysis failed for {FilePath}", filePath);
-            report.Notes.Add("ファイル分析中にエラーが発生しました");
+            report.AnalysisFailed = true;
+            report.Notes.Add("ファイルが複雑なため解析できませんでした");
             report.RiskScore = 50;
         }
 

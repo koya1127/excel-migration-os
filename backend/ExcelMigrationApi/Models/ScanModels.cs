@@ -7,8 +7,9 @@ public class FileReport
     public long SizeBytes { get; set; }
     public string ModifiedUtc { get; set; } = string.Empty;
     public bool HasMacro { get; set; }
-    public int VbaModuleCount { get; set; }
-    public int VbaTotalCodeLength { get; set; }
+    public int? VbaModuleCount { get; set; }
+    public int? VbaTotalCodeLength { get; set; }
+    public bool AnalysisFailed { get; set; }
     public int SheetCount { get; set; }
     public int FormulaCount { get; set; }
     public int VolatileFormulaCount { get; set; }
