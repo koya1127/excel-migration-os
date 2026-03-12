@@ -1,7 +1,32 @@
 "use client";
 
-import { useState, useCallback, useRef, Fragment } from "react";
+import { useState, useCallback, useRef, Fragment, useEffect } from "react";
 import { scanFiles, type ScanReport, type FileReport, type GroupSummary } from "@/lib/api";
+
+function InfoPopup({ trigger, children }: { trigger: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <span ref={ref} className="relative inline-block">
+      <span className="cursor-pointer" onClick={() => setOpen(!open)}>{trigger}</span>
+      {open && (
+        <span className="absolute z-50 left-full top-1/2 -translate-y-1/2 ml-3 w-72 rounded-lg bg-gray-900 text-white text-sm p-4 shadow-xl">
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -113,9 +138,9 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
             <th className="px-4 py-3">形式</th>
             <SortHeader label="サイズ" sortKey="sizeBytes" {...sortProps} />
             <SortHeader label="VBAモジュール数" sortKey="hasMacro" {...sortProps} />
-            <SortHeader label="数式" sortKey="formulaCount" title="セル内の数式（=で始まるセル）の数" {...sortProps} />
-            <SortHeader label="Sheets非対応" sortKey="incompatibleFunctionCount" title="Google Sheetsに存在しない、または動作が異なる関数の数" {...sortProps} />
-            <SortHeader label="移行リスク" sortKey="riskScore" title="移行の難しさ（マクロ・外部リンク・非対応関数などから算出）" {...sortProps} />
+            <SortHeader label="数式" sortKey="formulaCount" {...sortProps} />
+            <SortHeader label="Sheets非対応" sortKey="incompatibleFunctionCount" {...sortProps} />
+            <SortHeader label="移行リスク" sortKey="riskScore" {...sortProps} />
             <th className="px-4 py-3">詳細</th>
           </tr>
         </thead>
@@ -131,35 +156,50 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatBytes(f.sizeBytes)}</td>
                 <td className="px-4 py-3">
                   {f.hasMacro ? (
-                    <span className="relative group cursor-help">
+                    <InfoPopup trigger={
                       <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-700">
                         {f.vbaModuleCount}個
                       </span>
-                      <span className="absolute z-50 hidden group-hover:block left-0 top-full mt-2 w-72 rounded-lg bg-gray-900 text-white text-sm p-4 shadow-xl">
-                        <span className="block font-bold mb-2">VBAモジュール情報</span>
-                        <span className="block mb-1">モジュール数: <span className="font-mono text-amber-300">{f.vbaModuleCount}個</span></span>
-                        <span className="block mb-2">総コード量: <span className="font-mono text-amber-300">{f.vbaTotalCodeLength?.toLocaleString() ?? 0}文字</span></span>
-                        <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">VBAモジュールとは、Excelマクロのプログラムを格納する単位です（例: ThisWorkbook, Sheet1, Module1 など）。移行時にGoogle Apps Scriptへ変換されます。</span>
-                      </span>
-                    </span>
+                    }>
+                      <span className="block font-bold mb-2">VBAモジュール情報</span>
+                      <span className="block mb-1">モジュール数: <span className="font-mono text-amber-300">{f.vbaModuleCount}個</span></span>
+                      <span className="block mb-2">総コード量: <span className="font-mono text-amber-300">{(f.vbaTotalCodeLength ?? 0).toLocaleString()}文字</span></span>
+                      <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">VBAモジュール = Excelマクロのプログラム単位（ThisWorkbook, Sheet1, Module1 など）。移行時にGoogle Apps Scriptへ変換されます。</span>
+                    </InfoPopup>
                   ) : (
                     <span className="text-gray-300 text-xs">-</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">
-                  {f.formulaCount > 0 ? f.formulaCount.toLocaleString() : <span className="text-gray-300">-</span>}
+                  {f.formulaCount > 0 ? (
+                    <InfoPopup trigger={<span className="border-b border-dotted border-gray-400">{f.formulaCount.toLocaleString()}</span>}>
+                      <span className="block font-bold mb-2">数式の数</span>
+                      <span className="block mb-2">このファイルには <span className="font-mono text-amber-300">{f.formulaCount.toLocaleString()}個</span> の数式セルがあります。</span>
+                      <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">数式 = セル内の計算式（=SUM(...)など）。数が多いほど移行時の検証作業が増えます。Google Sheetsでは一部の関数の動作が異なる場合があります。</span>
+                    </InfoPopup>
+                  ) : <span className="text-gray-300">-</span>}
                 </td>
                 <td className="px-4 py-3">
                   {f.incompatibleFunctionCount > 0 ? (
-                    <span className="inline-flex items-center rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700">
-                      {f.incompatibleFunctionCount}個
-                    </span>
+                    <InfoPopup trigger={
+                      <span className="inline-flex items-center rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700">
+                        {f.incompatibleFunctionCount}個
+                      </span>
+                    }>
+                      <span className="block font-bold mb-2">Sheets非対応の関数</span>
+                      <span className="block mb-2"><span className="font-mono text-red-300">{f.incompatibleFunctionCount}種類</span> の非対応関数が見つかりました。</span>
+                      <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">Google Sheetsに存在しない、または動作が異なるExcel関数です（例: ASC, JIS, PHONETIC など）。移行後に手動で代替処理が必要になります。</span>
+                    </InfoPopup>
                   ) : (
                     <span className="text-gray-300 text-xs">-</span>
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <RiskBar score={f.riskScore} />
+                  <InfoPopup trigger={<RiskBar score={f.riskScore} />}>
+                    <span className="block font-bold mb-2">移行リスク: {f.riskScore}/100</span>
+                    <span className="block mb-2">{f.riskScore < 40 ? "低リスク — そのまま移行できる可能性が高いです。" : f.riskScore < 70 ? "中リスク — マクロの変換や一部関数の手動対応が必要です。" : "高リスク — 非対応関数・外部リンク・複雑なマクロがあり、手動対応が多く必要です。"}</span>
+                    <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">移行リスクはマクロの有無、非対応関数の数、外部リンク、数式の量などから自動算出したスコアです。高いほどGoogle Sheetsへの移行が難しくなります。</span>
+                  </InfoPopup>
                 </td>
                 <td className="px-4 py-3 max-w-[300px]">
                   <div className="flex flex-wrap gap-1">
