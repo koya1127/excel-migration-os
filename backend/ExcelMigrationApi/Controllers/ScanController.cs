@@ -25,38 +25,44 @@ public class ScanController : ControllerBase
     };
 
     [HttpPost]
-    [RequestSizeLimit(50 * 1024 * 1024)] // 50MB limit
+    [RequestSizeLimit(200 * 1024 * 1024)] // 200MB limit (testing, raise to 300MB after)
     public async Task<ActionResult<ScanReport>> Scan(
         [FromForm] List<IFormFile> files,
         [FromForm] string groupBy = "none")
     {
         if (files == null || files.Count == 0)
         {
-            return BadRequest(new { error = "ファイルがアップロードされていません" });
+            return BadRequest(new { error = "ファイルがアップロードされていません。Excelファイル（.xlsx, .xlsm, .xls）を選択してください。" });
         }
 
         // Validate file extensions
-        foreach (var file in files)
+        var unsupported = files
+            .Select(f => Path.GetExtension(f.FileName))
+            .Where(ext => !AllowedExtensions.Contains(ext))
+            .Distinct()
+            .ToList();
+        if (unsupported.Count > 0)
         {
-            var ext = Path.GetExtension(file.FileName);
-            if (!AllowedExtensions.Contains(ext))
-            {
-                return BadRequest(new { error = $"サポートされていないファイル形式です: {ext}（.xlsx, .xlsm, .xls, .csv のみ対応）" });
-            }
+            return BadRequest(new { error = $"サポートされていないファイル形式が含まれています: {string.Join(", ", unsupported)}。対応形式: .xlsx, .xlsm, .xls, .csv" });
         }
 
-        if (files.Count > 100)
+        if (files.Count > 1000)
         {
-            return BadRequest(new { error = "1回のリクエストでアップロードできるファイル数は最大100です" });
+            return BadRequest(new { error = $"ファイル数が{files.Count}件です。1回のスキャンは最大1,000件までです。フォルダを分けて再度お試しください。" });
         }
 
         // Reject individual files over 30MB
-        foreach (var file in files)
+        var tooLarge = files.Where(f => f.Length > 30 * 1024 * 1024).Select(f => f.FileName).ToList();
+        if (tooLarge.Count > 0)
         {
-            if (file.Length > 30 * 1024 * 1024)
-            {
-                return BadRequest(new { error = $"ファイル「{file.FileName}」が30MBを超えています" });
-            }
+            return BadRequest(new { error = $"30MBを超えるファイルがあります: {string.Join(", ", tooLarge.Take(5))}。各ファイルは30MB以下にしてください。" });
+        }
+
+        // Check total size
+        var totalBytes = files.Sum(f => f.Length);
+        if (totalBytes > 200 * 1024 * 1024)
+        {
+            return BadRequest(new { error = $"合計サイズが{totalBytes / (1024 * 1024)}MBです。1回のスキャンは合計300MBまでです。ファイル数を減らして再度お試しください。" });
         }
 
         // Validate groupBy parameter

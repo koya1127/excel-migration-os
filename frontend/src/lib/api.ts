@@ -75,7 +75,10 @@ export async function scanFiles(files: File[], groupBy: string = "subfolder"): P
     headers: { ...authHeaders },
     body: formData,
   });
-  if (!res.ok) throw new Error(`Scan failed: ${res.statusText}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `スキャンに失敗しました（${res.status}）`);
+  }
   return res.json();
 }
 

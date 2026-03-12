@@ -269,8 +269,8 @@ export default function ScanPage() {
     if (accepted.length > 0) {
       setSelectedFiles((prev) => {
         const combined = [...prev, ...accepted];
-        if (combined.length > 100) {
-          setError("ファイル数が100件を超えています。100件以下にしてください。");
+        if (combined.length > 1000) {
+          setError(`ファイル数が${combined.length}件です。1回のスキャンは最大1,000件までです。フォルダを分けてお試しください。`);
           return prev;
         }
         return combined;
