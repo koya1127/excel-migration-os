@@ -60,7 +60,7 @@ public class ScanController : ControllerBase
 
         // Check total size
         var totalBytes = files.Sum(f => f.Length);
-        if (totalBytes > 200 * 1024 * 1024) // TODO: raise back to 300MB after testing
+        if (totalBytes > 30 * 1024 * 1024) // TODO: raise back to 300MB after testing
         {
             return BadRequest(new { error = $"合計サイズが{totalBytes / (1024 * 1024)}MBです。1回のスキャンは合計300MBまでです。ファイル数を減らして再度お試しください。" });
         }
