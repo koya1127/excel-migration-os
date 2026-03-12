@@ -25,7 +25,7 @@ public class ScanController : ControllerBase
     };
 
     [HttpPost]
-    [RequestSizeLimit(200 * 1024 * 1024)] // 200MB limit (testing, raise to 300MB after)
+    [RequestSizeLimit(500 * 1024 * 1024)] // 500MB ASP.NET limit (actual limit enforced in code below)
     public async Task<ActionResult<ScanReport>> Scan(
         [FromForm] List<IFormFile> files,
         [FromForm] string groupBy = "none")
@@ -60,7 +60,7 @@ public class ScanController : ControllerBase
 
         // Check total size
         var totalBytes = files.Sum(f => f.Length);
-        if (totalBytes > 200 * 1024 * 1024)
+        if (totalBytes > 300 * 1024 * 1024)
         {
             return BadRequest(new { error = $"合計サイズが{totalBytes / (1024 * 1024)}MBです。1回のスキャンは合計300MBまでです。ファイル数を減らして再度お試しください。" });
         }

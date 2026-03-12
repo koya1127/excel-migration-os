@@ -112,7 +112,7 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
             <SortHeader label="ファイル名" sortKey="name" {...sortProps} />
             <th className="px-4 py-3">形式</th>
             <SortHeader label="サイズ" sortKey="sizeBytes" {...sortProps} />
-            <SortHeader label="マクロ" sortKey="hasMacro" title="VBAマクロの有無とモジュール数" {...sortProps} />
+            <SortHeader label="VBAモジュール数" sortKey="hasMacro" {...sortProps} />
             <SortHeader label="数式" sortKey="formulaCount" title="セル内の数式（=で始まるセル）の数" {...sortProps} />
             <SortHeader label="Sheets非対応" sortKey="incompatibleFunctionCount" title="Google Sheetsに存在しない、または動作が異なる関数の数" {...sortProps} />
             <SortHeader label="移行リスク" sortKey="riskScore" title="移行の難しさ（マクロ・外部リンク・非対応関数などから算出）" {...sortProps} />
@@ -131,9 +131,15 @@ function FileTable({ files }: { files: FileReport[]; nested?: boolean }) {
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatBytes(f.sizeBytes)}</td>
                 <td className="px-4 py-3">
                   {f.hasMacro ? (
-                    <span className="cursor-help" title={`VBAモジュール ${f.vbaModuleCount} 個を含む`}>
+                    <span className="relative group cursor-help">
                       <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-700">
                         {f.vbaModuleCount}個
+                      </span>
+                      <span className="absolute z-50 hidden group-hover:block left-0 top-full mt-2 w-72 rounded-lg bg-gray-900 text-white text-sm p-4 shadow-xl">
+                        <span className="block font-bold mb-2">VBAモジュール情報</span>
+                        <span className="block mb-1">モジュール数: <span className="font-mono text-amber-300">{f.vbaModuleCount}個</span></span>
+                        <span className="block mb-2">総コード量: <span className="font-mono text-amber-300">{f.vbaTotalCodeLength?.toLocaleString() ?? 0}文字</span></span>
+                        <span className="block text-xs text-gray-400 border-t border-gray-700 pt-2">VBAモジュールとは、Excelマクロのプログラムを格納する単位です（例: ThisWorkbook, Sheet1, Module1 など）。移行時にGoogle Apps Scriptへ変換されます。</span>
                       </span>
                     </span>
                   ) : (
@@ -198,8 +204,8 @@ function GroupTable({ groups, files }: { groups: GroupSummary[]; files: FileRepo
             <th className="px-4 py-3 w-8"></th>
             <th className="px-4 py-3">グループ名</th>
             <th className="px-4 py-3">ファイル数</th>
-            <th className="px-4 py-3" title="グループ内でマクロを含むファイルの数">マクロあり</th>
-            <th className="px-4 py-3" title="グループ内のVBAモジュール合計数">VBA合計</th>
+            <th className="px-4 py-3">VBAファイル数</th>
+            <th className="px-4 py-3">VBAモジュール合計</th>
             <th className="px-4 py-3" title="グループ内ファイルの移行リスク平均">平均リスク</th>
             <th className="px-4 py-3" title="グループ内で最もリスクが高いファイルのスコア">最大リスク</th>
             <th className="px-4 py-3" title="Google Sheetsに非対応の関数の合計数">Sheets非対応</th>
@@ -344,7 +350,13 @@ export default function ScanPage() {
       const result = await scanFiles(selectedFiles, groupBy);
       setReport(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "スキャンに失敗しました");
+      const msg = err instanceof Error ? err.message : "スキャンに失敗しました";
+      if (msg === "Failed to fetch" || msg.includes("NetworkError")) {
+        const totalMB = Math.round(selectedFiles.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024));
+        setError(`サーバーに接続できませんでした。ファイル合計: ${totalMB}MB。サイズが大きすぎる場合はファイル数を減らしてお試しください。`);
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -534,7 +546,7 @@ export default function ScanPage() {
                 <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-5 shadow-sm">
                   <p className="text-sm text-yellow-700">Medium</p>
                   <p className="mt-1 text-3xl font-bold text-yellow-800">{difficultyCounts.Medium}</p>
-                  <p className="text-xs text-yellow-600 mt-1">マクロ変換が必要</p>
+                  <p className="text-xs text-yellow-600 mt-1">VBAマクロの変換が必要</p>
                 </div>
                 <div className="rounded-xl border border-red-200 bg-red-50 p-5 shadow-sm">
                   <p className="text-sm text-red-700">Hard</p>

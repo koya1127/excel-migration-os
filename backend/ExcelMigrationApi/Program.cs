@@ -46,6 +46,12 @@ if (missingVars.Count > 0)
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Raise Kestrel max request body size (default 28MB) to allow large file uploads
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 500 * 1024 * 1024; // 500MB — actual limits enforced per-controller
+});
+
 // CORS: allow configured origins (production + dev)
 var allowedOrigins = new List<string> { "http://localhost:3000" };
 var productionOrigin = Environment.GetEnvironmentVariable("FRONTEND_ORIGIN");
@@ -124,6 +130,12 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
         });
     });
+});
+
+// Raise multipart form body size limit for large file uploads
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 500 * 1024 * 1024; // 500MB
 });
 
 // Add controllers with camelCase JSON

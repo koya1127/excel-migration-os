@@ -114,7 +114,13 @@ public class ScanService
             // Count VBA modules via VbaExtractor
             if (hasMacro)
             {
-                try { report.VbaModuleCount = VbaExtractor.CountModules(filePath); } catch { }
+                try
+                {
+                    var vbaModules = VbaExtractor.ExtractModules(filePath);
+                    report.VbaModuleCount = vbaModules.Count;
+                    report.VbaTotalCodeLength = vbaModules.Sum(m => m.Code?.Length ?? 0);
+                }
+                catch { }
             }
 
             // Named ranges

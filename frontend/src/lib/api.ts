@@ -30,6 +30,7 @@ export interface FileReport {
   modifiedUtc: string;
   hasMacro: boolean;
   vbaModuleCount: number;
+  vbaTotalCodeLength: number;
   sheetCount: number;
   formulaCount: number;
   volatileFormulaCount: number;
