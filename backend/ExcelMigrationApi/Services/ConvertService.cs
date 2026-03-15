@@ -377,6 +377,14 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
         }
 
         var agentReport = JsonSerializer.Deserialize<AgentConvertReport>(responseBody);
+
+        // If any result has an agent error, fall back to direct API for the whole batch
+        if (agentReport?.Results?.Any(r => r.Status == "error" && (r.Error ?? "").Contains("エージェント")) == true)
+        {
+            _logger.LogWarning("Agent batch has agent errors, falling back to direct API");
+            throw new HttpRequestException("Agent batch returned agent errors");
+        }
+
         var report = new ConvertReport
         {
             GeneratedUtc = agentReport?.GeneratedUtc ?? DateTime.UtcNow.ToString("o"),
