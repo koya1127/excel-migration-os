@@ -21,12 +21,59 @@ public class ConvertService
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
 
-Rules:
+## VBA → GAS Event Handler Mapping
+When converting Document modules (ThisWorkbook, Sheet modules), apply these mappings:
+
+| VBA Event | GAS Equivalent | Notes |
+|---|---|---|
+| Workbook_Open / Auto_Open | function onOpen(e) | Simple trigger — runs automatically when spreadsheet opens. Use e.source for SpreadsheetApp reference. |
+| Worksheet_Change | function onEdit(e) | Simple trigger. Use e.range, e.value, e.oldValue, e.source. Filter by e.range.getSheet().getName() if the handler is sheet-specific. |
+| Worksheet_SelectionChange | installable trigger | Requires: ScriptApp.newTrigger('functionName').forSpreadsheet(SpreadsheetApp.getActive()).onSelectionChange().create() — add a setupTriggers() function. |
+| Workbook_BeforeClose | — | No GAS equivalent. Add TODO comment. |
+| Workbook_BeforeSave | installable onChange | Approximate with onChange trigger (e.changeType). |
+| Worksheet_Activate/Deactivate | — | No GAS equivalent. Add TODO comment suggesting onOpen or custom menu. |
+| Workbook_NewSheet | installable onChange | Use onChange with e.changeType == 'INSERT_SHEET'. |
+| Worksheet_Calculate | installable onChange | Approximate with onChange trigger. |
+
+## VBA Patterns to Remove or Replace
+- Application.ScreenUpdating = True/False → DELETE (GAS has no equivalent, not needed)
+- Application.EnableEvents = True/False → DELETE
+- Application.DisplayAlerts = True/False → DELETE
+- Application.Calculation = xlManual/xlAutomatic → DELETE (use SpreadsheetApp.flush() if needed)
+- On Error Resume Next → Use try/catch blocks
+- On Error GoTo → Use try/catch blocks
+- DoEvents → DELETE (GAS is single-threaded)
+- ActiveWorkbook → SpreadsheetApp.getActiveSpreadsheet()
+- ActiveSheet → SpreadsheetApp.getActiveSheet()
+- ThisWorkbook → SpreadsheetApp.getActiveSpreadsheet()
+- Cells(row, col) → sheet.getRange(row, col)
+- Range(""A1"") → sheet.getRange(""A1"")
+- Sheets(""name"") → ss.getSheetByName(""name"")
+- .Value / .Value2 → .getValue() / .getValues()
+- MsgBox → SpreadsheetApp.getUi().alert()
+- InputBox → SpreadsheetApp.getUi().prompt()
+
+## Installable Triggers
+When an event requires an installable trigger, generate a setupTriggers() function:
+```javascript
+function setupTriggers() {
+  // Remove existing triggers to avoid duplicates
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+  // Create new triggers
+  ScriptApp.newTrigger('onSelectionChange').forSpreadsheet(SpreadsheetApp.getActive()).onSelectionChange().create();
+}
+```
+And add a comment at the top: // Run setupTriggers() once to install event triggers
+
+## Button/Menu Handling
+- If button context is provided with sheet grouping, create a custom menu in onOpen()
+- Group menu items by sheet when buttons come from multiple sheets
+- If the module already has a Workbook_Open/Auto_Open handler, merge menu creation into the converted onOpen()
+- Each button's macro becomes a menu item calling the converted function
+
+## Output Rules
 - Use V8 runtime syntax (let, const, arrow functions OK)
-- Replace Excel object model with Google Sheets equivalents
-- Replace MsgBox with Browser.msgBox or SpreadsheetApp.getUi().alert()
-- Replace InputBox with Browser.inputBox
-- If button context is provided, generate an onOpen() function that adds a custom menu
 - Output ONLY the .gs code, no explanations
 - CRITICAL: Ensure all braces {}, parentheses (), and brackets [] are properly closed
 - CRITICAL: The output must be syntactically valid JavaScript. Never truncate code.
@@ -59,22 +106,58 @@ Rules:
             var userMessage = new StringBuilder();
             userMessage.AppendLine($"Module Name: {request.ModuleName}");
             userMessage.AppendLine($"Module Type: {request.ModuleType}");
+            if (!string.IsNullOrEmpty(request.SheetName))
+            {
+                userMessage.AppendLine($"Sheet Name: {request.SheetName}");
+            }
             userMessage.AppendLine();
+
+            // Include detected events context
+            if (request.DetectedEvents != null && request.DetectedEvents.Count > 0)
+            {
+                userMessage.AppendLine("Detected VBA Events in this module:");
+                foreach (var evt in request.DetectedEvents)
+                {
+                    userMessage.AppendLine($"- {evt.VbaEventName} → GAS: {evt.GasTriggerType} | {evt.GasNotes}");
+                }
+                userMessage.AppendLine();
+            }
+
             userMessage.AppendLine("VBA Code:");
             userMessage.AppendLine("```vba");
             userMessage.AppendLine(request.VbaCode);
             userMessage.AppendLine("```");
 
+            // Button context grouped by sheet
             if (request.ButtonContext != null && request.ButtonContext.Count > 0)
             {
                 userMessage.AppendLine();
                 userMessage.AppendLine("Button Context (form controls that trigger macros):");
-                foreach (var btn in request.ButtonContext)
+
+                var buttonsBySheet = request.ButtonContext
+                    .GroupBy(b => string.IsNullOrEmpty(b.SheetName) ? "(unknown sheet)" : b.SheetName);
+
+                foreach (var group in buttonsBySheet)
                 {
-                    userMessage.AppendLine($"- Button \"{btn.Label}\" calls macro \"{btn.Macro}\"");
+                    userMessage.AppendLine($"  Sheet: {group.Key}");
+                    foreach (var btn in group)
+                    {
+                        userMessage.AppendLine($"    - {btn.ControlType} \"{btn.Label}\" → calls \"{btn.Macro}\"");
+                    }
                 }
+
                 userMessage.AppendLine();
-                userMessage.AppendLine("Generate an onOpen() function that creates a custom menu with these buttons.");
+                userMessage.AppendLine("Generate an onOpen() function that creates a custom menu with these buttons, grouped by sheet if they come from multiple sheets.");
+
+                // Check if this module already has Workbook_Open
+                var hasOpenEvent = request.DetectedEvents?.Any(e =>
+                    e.VbaEventName.Equals("Workbook_Open", StringComparison.OrdinalIgnoreCase) ||
+                    e.VbaEventName.Equals("Auto_Open", StringComparison.OrdinalIgnoreCase)) ?? false;
+
+                if (hasOpenEvent)
+                {
+                    userMessage.AppendLine("IMPORTANT: This module already contains Workbook_Open/Auto_Open. Merge the menu creation INTO the converted onOpen() function — do NOT create a separate onOpen().");
+                }
             }
 
             var model = request.VbaCode.Split('\n').Length <= SmallModuleThreshold ? ModelSmall : ModelLarge;

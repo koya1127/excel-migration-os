@@ -6,7 +6,9 @@ public class ConvertRequest
     public string ModuleName { get; set; } = string.Empty;
     public string ModuleType { get; set; } = string.Empty;
     public string SourceFile { get; set; } = string.Empty;
+    public string SheetName { get; set; } = string.Empty; // For Document modules: the worksheet name
     public List<FormControl>? ButtonContext { get; set; }
+    public List<VbaEvent>? DetectedEvents { get; set; }
 }
 
 public class ConvertResult

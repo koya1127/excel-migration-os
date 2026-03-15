@@ -38,3 +38,5 @@ node_modules/
 bin/
 bin-*/
 obj/
+
+.vercel

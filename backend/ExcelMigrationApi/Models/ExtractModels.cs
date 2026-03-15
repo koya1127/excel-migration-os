@@ -7,6 +7,16 @@ public class VbaModule
     public string ModuleType { get; set; } = string.Empty; // "Standard", "Class", "Form", "Document"
     public int CodeLines { get; set; }
     public string Code { get; set; } = string.Empty;
+    public string SheetName { get; set; } = string.Empty; // For Document modules: the worksheet name this code belongs to
+    public List<VbaEvent> DetectedEvents { get; set; } = new();
+}
+
+public class VbaEvent
+{
+    public string VbaEventName { get; set; } = string.Empty;   // e.g. "Workbook_Open", "Worksheet_Change"
+    public string SheetName { get; set; } = string.Empty;      // e.g. "Sheet1", "ThisWorkbook"
+    public string GasTriggerType { get; set; } = string.Empty;  // e.g. "onOpen", "onEdit", "installable", "unsupported"
+    public string GasNotes { get; set; } = string.Empty;        // Conversion guidance
 }
 
 public class FormControl

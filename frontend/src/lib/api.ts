@@ -85,12 +85,21 @@ export async function scanFiles(files: File[], groupBy: string = "subfolder"): P
 }
 
 // Extract types
+export interface VbaEvent {
+  vbaEventName: string;
+  sheetName: string;
+  gasTriggerType: string;
+  gasNotes: string;
+}
+
 export interface VbaModule {
   sourceFile: string;
   moduleName: string;
   moduleType: string;
   codeLines: number;
   code: string;
+  sheetName: string;
+  detectedEvents: VbaEvent[];
 }
 
 export interface FormControl {
@@ -115,7 +124,9 @@ export interface ConvertRequest {
   vbaCode: string;
   moduleName: string;
   moduleType: string;
+  sheetName?: string;
   buttonContext?: FormControl[];
+  detectedEvents?: VbaEvent[];
 }
 
 export interface ConvertResult {

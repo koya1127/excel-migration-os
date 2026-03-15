@@ -174,7 +174,9 @@ public class MigrateController : ControllerBase
                     ModuleName = module.ModuleName,
                     ModuleType = module.ModuleType,
                     SourceFile = module.SourceFile,
-                    ButtonContext = buttonContext.Count > 0 ? buttonContext : null
+                    SheetName = module.SheetName,
+                    ButtonContext = buttonContext.Count > 0 ? buttonContext : null,
+                    DetectedEvents = module.DetectedEvents.Count > 0 ? module.DetectedEvents : null
                 });
             }
 
