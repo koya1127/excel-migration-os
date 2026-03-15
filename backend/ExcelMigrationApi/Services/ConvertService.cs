@@ -185,7 +185,7 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Anthropic API error {StatusCode} for module {Module}", (int)response.StatusCode, request.ModuleName);
+                _logger.LogError("Anthropic API error {StatusCode} for module {Module}: {Body}", (int)response.StatusCode, request.ModuleName, responseBody);
                 return new ConvertResult
                 {
                     ModuleName = request.ModuleName,
