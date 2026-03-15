@@ -58,7 +58,9 @@ jobs:
               anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
               clerk-domain="${{ secrets.CLERK_DOMAIN }}" \
               clerk-secret-key="${{ secrets.CLERK_SECRET_KEY }}" \
-              stripe-secret-key="${{ secrets.STRIPE_SECRET_KEY }}"
+              stripe-secret-key="${{ secrets.STRIPE_SECRET_KEY }}" \
+              google-client-id="${{ secrets.GOOGLE_CLIENT_ID }}" \
+              google-client-secret="${{ secrets.GOOGLE_CLIENT_SECRET }}"
 
       - name: Deploy to Container Apps
         run: |
@@ -73,5 +75,7 @@ jobs:
               STRIPE_SECRET_KEY=secretref:stripe-secret-key \
               STRIPE_METER_EVENT_NAME="${{ secrets.STRIPE_METER_EVENT_NAME }}" \
               STRIPE_METER_ID="${{ secrets.STRIPE_METER_ID }}" \
+              GOOGLE_CLIENT_ID=secretref:google-client-id \
+              GOOGLE_CLIENT_SECRET=secretref:google-client-secret \
               ASPNETCORE_ENVIRONMENT=Production \
               FRONTEND_ORIGIN=https://frontend-self-ten-98.vercel.app
