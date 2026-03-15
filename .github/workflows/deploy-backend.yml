@@ -8,6 +8,7 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/excel-migration-api
+  AGENT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/excel-migration-agent
   RESOURCE_GROUP: excel-migration-api_group
   CONTAINER_APP_NAME: excel-migration-api
 
@@ -28,7 +29,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push C# API image
         uses: docker/build-push-action@v6
         with:
           context: backend/ExcelMigrationApi
@@ -37,9 +38,20 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Make package public
+      - name: Build and push Agent Service image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/agent-service
+          push: true
+          tags: |
+            ${{ env.AGENT_IMAGE_NAME }}:latest
+            ${{ env.AGENT_IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Make packages public
         run: |
           gh api --method PUT /user/packages/container/excel-migration-api/visibility \
+            -f visibility=public || true
+          gh api --method PUT /user/packages/container/excel-migration-agent/visibility \
             -f visibility=public || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,20 +74,61 @@ jobs:
               google-client-id="${{ secrets.GOOGLE_CLIENT_ID }}" \
               google-client-secret="${{ secrets.GOOGLE_CLIENT_SECRET }}"
 
-      - name: Deploy to Container Apps
+      - name: Deploy main container and agent sidecar
         run: |
+          # Get current YAML config
+          az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            -o yaml > current.yaml
+
+          # Update containers section using Python
+          python3 << 'PYEOF'
+          import yaml, sys
+
+          with open("current.yaml") as f:
+              config = yaml.safe_load(f)
+
+          tpl = config["properties"]["template"]
+
+          # Build new containers list
+          main_env = [
+              {"name": "ANTHROPIC_API_KEY", "secretRef": "anthropic-api-key"},
+              {"name": "CLERK_DOMAIN", "secretRef": "clerk-domain"},
+              {"name": "CLERK_SECRET_KEY", "secretRef": "clerk-secret-key"},
+              {"name": "STRIPE_SECRET_KEY", "secretRef": "stripe-secret-key"},
+              {"name": "STRIPE_METER_EVENT_NAME", "value": "${{ secrets.STRIPE_METER_EVENT_NAME }}"},
+              {"name": "STRIPE_METER_ID", "value": "${{ secrets.STRIPE_METER_ID }}"},
+              {"name": "GOOGLE_CLIENT_ID", "secretRef": "google-client-id"},
+              {"name": "GOOGLE_CLIENT_SECRET", "secretRef": "google-client-secret"},
+              {"name": "ASPNETCORE_ENVIRONMENT", "value": "Production"},
+              {"name": "FRONTEND_ORIGIN", "value": "https://frontend-self-ten-98.vercel.app"},
+              {"name": "AGENT_SERVICE_URL", "value": "http://localhost:8081"},
+          ]
+
+          tpl["containers"] = [
+              {
+                  "name": "excel-migration-api",
+                  "image": "${{ env.IMAGE_NAME }}:${{ github.sha }}",
+                  "resources": {"cpu": 0.5, "memory": "1Gi"},
+                  "env": main_env,
+              },
+              {
+                  "name": "agent-service",
+                  "image": "${{ env.AGENT_IMAGE_NAME }}:${{ github.sha }}",
+                  "resources": {"cpu": 0.25, "memory": "0.5Gi"},
+                  "env": [
+                      {"name": "ANTHROPIC_API_KEY", "secretRef": "anthropic-api-key"},
+                      {"name": "AGENT_SERVICE_PORT", "value": "8081"},
+                  ],
+              },
+          ]
+
+          with open("updated.yaml", "w") as f:
+              yaml.dump(config, f, default_flow_style=False)
+          PYEOF
+
           az containerapp update \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars \
-              ANTHROPIC_API_KEY=secretref:anthropic-api-key \
-              CLERK_DOMAIN=secretref:clerk-domain \
-              CLERK_SECRET_KEY=secretref:clerk-secret-key \
-              STRIPE_SECRET_KEY=secretref:stripe-secret-key \
-              STRIPE_METER_EVENT_NAME="${{ secrets.STRIPE_METER_EVENT_NAME }}" \
-              STRIPE_METER_ID="${{ secrets.STRIPE_METER_ID }}" \
-              GOOGLE_CLIENT_ID=secretref:google-client-id \
-              GOOGLE_CLIENT_SECRET=secretref:google-client-secret \
-              ASPNETCORE_ENVIRONMENT=Production \
-              FRONTEND_ORIGIN=https://frontend-self-ten-98.vercel.app
+            --yaml updated.yaml

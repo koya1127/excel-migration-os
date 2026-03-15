@@ -170,10 +170,14 @@ public class DeployService
         {
             if (string.IsNullOrEmpty(result.GasCode)) continue;
 
-            // Extract menu items
+            // Extract menu items (deduplicate)
             foreach (Match m in menuRegex.Matches(result.GasCode))
             {
-                info.MenuItems.Add(m.Groups[1].Value);
+                var item = m.Groups[1].Value;
+                if (!info.MenuItems.Contains(item))
+                {
+                    info.MenuItems.Add(item);
+                }
             }
 
             // Extract TODO/limitations

@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -10,6 +9,9 @@ public class ConvertService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ConvertService> _logger;
+    private readonly string _agentServiceUrl;
+
+    // Fallback to direct Anthropic API if agent service is unavailable
     private readonly string _apiKey;
     private const string AnthropicApiUrl = "https://api.anthropic.com/v1/messages";
     private const string ModelLarge = "claude-sonnet-4-6";
@@ -18,6 +20,7 @@ public class ConvertService
     private const int MaxConcurrency = 5;
     private static readonly SemaphoreSlim _concurrencySemaphore = new(MaxConcurrency);
 
+    // System prompt kept as fallback
     private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Google Apps Script.
 Convert the following VBA module to equivalent Google Apps Script (.gs) code.
 
@@ -86,9 +89,83 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
         _apiKey = config["ANTHROPIC_API_KEY"]
             ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
             ?? string.Empty;
+        _agentServiceUrl = config["AGENT_SERVICE_URL"]
+            ?? Environment.GetEnvironmentVariable("AGENT_SERVICE_URL")
+            ?? string.Empty;
     }
 
     public async Task<ConvertResult> ConvertModule(ConvertRequest request)
+    {
+        // Try agent service first, fall back to direct API
+        if (!string.IsNullOrEmpty(_agentServiceUrl))
+        {
+            try
+            {
+                return await ConvertViaAgent(request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Agent service unavailable for {Module}, falling back to direct API", request.ModuleName);
+            }
+        }
+
+        return await ConvertViaDirect(request);
+    }
+
+    private async Task<ConvertResult> ConvertViaAgent(ConvertRequest request)
+    {
+        var httpClient = _httpClientFactory.CreateClient("AgentService");
+        httpClient.Timeout = TimeSpan.FromMinutes(3); // Agent loop may take longer
+
+        // Convert C# model to snake_case JSON for Python
+        var agentRequest = new
+        {
+            vba_code = request.VbaCode,
+            module_name = request.ModuleName,
+            module_type = request.ModuleType,
+            source_file = request.SourceFile,
+            sheet_name = request.SheetName,
+            button_context = request.ButtonContext?.Select(b => new
+            {
+                control_type = b.ControlType,
+                label = b.Label,
+                macro = b.Macro,
+                sheet_name = b.SheetName,
+            }),
+            detected_events = request.DetectedEvents?.Select(e => new
+            {
+                vba_event_name = e.VbaEventName,
+                gas_trigger_type = e.GasTriggerType,
+                gas_notes = e.GasNotes,
+            }),
+        };
+
+        var json = JsonSerializer.Serialize(agentRequest);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var response = await httpClient.PostAsync($"{_agentServiceUrl}/convert", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Agent service error {StatusCode} for {Module}: {Body}",
+                (int)response.StatusCode, request.ModuleName, responseBody);
+            throw new HttpRequestException($"Agent service returned {(int)response.StatusCode}");
+        }
+
+        var agentResult = JsonSerializer.Deserialize<AgentConvertResult>(responseBody);
+        return new ConvertResult
+        {
+            ModuleName = agentResult?.ModuleName ?? request.ModuleName,
+            SourceFile = agentResult?.SourceFile ?? request.SourceFile,
+            GasCode = agentResult?.GasCode ?? string.Empty,
+            Status = agentResult?.Status ?? "error",
+            Error = agentResult?.Error ?? string.Empty,
+            InputTokens = agentResult?.InputTokens ?? 0,
+            OutputTokens = agentResult?.OutputTokens ?? 0,
+        };
+    }
+
+    private async Task<ConvertResult> ConvertViaDirect(ConvertRequest request)
     {
         if (string.IsNullOrEmpty(_apiKey))
         {
@@ -112,7 +189,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
             }
             userMessage.AppendLine();
 
-            // Include detected events context
             if (request.DetectedEvents != null && request.DetectedEvents.Count > 0)
             {
                 userMessage.AppendLine("Detected VBA Events in this module:");
@@ -128,7 +204,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
             userMessage.AppendLine(request.VbaCode);
             userMessage.AppendLine("```");
 
-            // Button context grouped by sheet
             if (request.ButtonContext != null && request.ButtonContext.Count > 0)
             {
                 userMessage.AppendLine();
@@ -149,7 +224,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
                 userMessage.AppendLine();
                 userMessage.AppendLine("Generate an onOpen() function that creates a custom menu with these buttons, grouped by sheet if they come from multiple sheets.");
 
-                // Check if this module already has Workbook_Open
                 var hasOpenEvent = request.DetectedEvents?.Any(e =>
                     e.VbaEventName.Equals("Workbook_Open", StringComparison.OrdinalIgnoreCase) ||
                     e.VbaEventName.Equals("Auto_Open", StringComparison.OrdinalIgnoreCase)) ?? false;
@@ -173,9 +247,9 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
                 }
             };
 
-            var json = JsonSerializer.Serialize(requestBody);
+            var requestJson = JsonSerializer.Serialize(requestBody);
             var httpRequest = new HttpRequestMessage(HttpMethod.Post, AnthropicApiUrl);
-            httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            httpRequest.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
             httpRequest.Headers.Add("x-api-key", _apiKey);
             httpRequest.Headers.Add("anthropic-version", "2023-06-01");
 
@@ -195,7 +269,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
                 };
             }
 
-            // Parse Claude API response
             var apiResponse = JsonSerializer.Deserialize<ClaudeApiResponse>(responseBody);
             var gasCode = string.Empty;
             var inputTokens = apiResponse?.Usage?.InputTokens ?? 0;
@@ -212,7 +285,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
                 }
             }
 
-            // Strip markdown code fences if present
             gasCode = StripCodeFences(gasCode);
 
             return new ConvertResult
@@ -240,19 +312,107 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
 
     public async Task<ConvertReport> ConvertBatch(List<ConvertRequest> requests)
     {
+        // Try agent service batch endpoint first
+        if (!string.IsNullOrEmpty(_agentServiceUrl))
+        {
+            try
+            {
+                return await ConvertBatchViaAgent(requests);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Agent batch service unavailable, falling back to direct API");
+            }
+        }
+
+        return await ConvertBatchDirect(requests);
+    }
+
+    private async Task<ConvertReport> ConvertBatchViaAgent(List<ConvertRequest> requests)
+    {
+        var httpClient = _httpClientFactory.CreateClient("AgentService");
+        httpClient.Timeout = TimeSpan.FromMinutes(10); // Batch may take longer
+
+        var agentRequest = new
+        {
+            modules = requests.Select(r => new
+            {
+                vba_code = r.VbaCode,
+                module_name = r.ModuleName,
+                module_type = r.ModuleType,
+                source_file = r.SourceFile,
+                sheet_name = r.SheetName,
+                button_context = r.ButtonContext?.Select(b => new
+                {
+                    control_type = b.ControlType,
+                    label = b.Label,
+                    macro = b.Macro,
+                    sheet_name = b.SheetName,
+                }),
+                detected_events = r.DetectedEvents?.Select(e => new
+                {
+                    vba_event_name = e.VbaEventName,
+                    gas_trigger_type = e.GasTriggerType,
+                    gas_notes = e.GasNotes,
+                }),
+            })
+        };
+
+        var json = JsonSerializer.Serialize(agentRequest);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var response = await httpClient.PostAsync($"{_agentServiceUrl}/convert/batch", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Agent batch returned {(int)response.StatusCode}");
+        }
+
+        var agentReport = JsonSerializer.Deserialize<AgentConvertReport>(responseBody);
+        var report = new ConvertReport
+        {
+            GeneratedUtc = agentReport?.GeneratedUtc ?? DateTime.UtcNow.ToString("o"),
+            Total = agentReport?.Total ?? 0,
+            Success = agentReport?.Success ?? 0,
+            Failed = agentReport?.Failed ?? 0,
+            TotalInputTokens = agentReport?.TotalInputTokens ?? 0,
+            TotalOutputTokens = agentReport?.TotalOutputTokens ?? 0,
+        };
+
+        if (agentReport?.Results != null)
+        {
+            foreach (var r in agentReport.Results)
+            {
+                report.Results.Add(new ConvertResult
+                {
+                    ModuleName = r.ModuleName ?? string.Empty,
+                    SourceFile = r.SourceFile ?? string.Empty,
+                    GasCode = r.GasCode ?? string.Empty,
+                    Status = r.Status ?? "error",
+                    Error = r.Error ?? string.Empty,
+                    InputTokens = r.InputTokens,
+                    OutputTokens = r.OutputTokens,
+                });
+            }
+        }
+
+        return report;
+    }
+
+    private async Task<ConvertReport> ConvertBatchDirect(List<ConvertRequest> requests)
+    {
         var report = new ConvertReport
         {
             GeneratedUtc = DateTime.UtcNow.ToString("o"),
             Total = requests.Count
         };
 
-        // Process in parallel with class-level concurrency limit
         var tasks = requests.Select(async (request, index) =>
         {
             await _concurrencySemaphore.WaitAsync();
             try
             {
-                return (Index: index, Result: await ConvertModule(request));
+                return (Index: index, Result: await ConvertViaDirect(request));
             }
             finally
             {
@@ -262,7 +422,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
 
         var results = await Task.WhenAll(tasks);
 
-        // Add results in original order
         foreach (var item in results.OrderBy(r => r.Index))
         {
             report.Results.Add(item.Result);
@@ -285,13 +444,11 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
 
         var lines = code.Split('\n').ToList();
 
-        // Remove leading ```javascript or ```gs
         if (lines.Count > 0 && lines[0].TrimStart().StartsWith("```"))
         {
             lines.RemoveAt(0);
         }
 
-        // Remove trailing ```
         if (lines.Count > 0 && lines[^1].Trim() == "```")
         {
             lines.RemoveAt(lines.Count - 1);
@@ -300,12 +457,48 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
         return string.Join('\n', lines).Trim();
     }
 
-    // Internal classes for Claude API response deserialization
+    // Agent service response models (snake_case JSON)
+    private class AgentConvertResult
+    {
+        [JsonPropertyName("module_name")]
+        public string? ModuleName { get; set; }
+        [JsonPropertyName("gas_code")]
+        public string? GasCode { get; set; }
+        [JsonPropertyName("status")]
+        public string? Status { get; set; }
+        [JsonPropertyName("error")]
+        public string? Error { get; set; }
+        [JsonPropertyName("source_file")]
+        public string? SourceFile { get; set; }
+        [JsonPropertyName("input_tokens")]
+        public int InputTokens { get; set; }
+        [JsonPropertyName("output_tokens")]
+        public int OutputTokens { get; set; }
+    }
+
+    private class AgentConvertReport
+    {
+        [JsonPropertyName("generated_utc")]
+        public string? GeneratedUtc { get; set; }
+        [JsonPropertyName("total")]
+        public int Total { get; set; }
+        [JsonPropertyName("success")]
+        public int Success { get; set; }
+        [JsonPropertyName("failed")]
+        public int Failed { get; set; }
+        [JsonPropertyName("total_input_tokens")]
+        public int TotalInputTokens { get; set; }
+        [JsonPropertyName("total_output_tokens")]
+        public int TotalOutputTokens { get; set; }
+        [JsonPropertyName("results")]
+        public List<AgentConvertResult>? Results { get; set; }
+    }
+
+    // Direct API response models (kept for fallback)
     private class ClaudeApiResponse
     {
         [JsonPropertyName("content")]
         public List<ContentBlock>? Content { get; set; }
-
         [JsonPropertyName("usage")]
         public UsageInfo? Usage { get; set; }
     }
@@ -314,7 +507,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
     {
         [JsonPropertyName("type")]
         public string Type { get; set; } = string.Empty;
-
         [JsonPropertyName("text")]
         public string? Text { get; set; }
     }
@@ -323,7 +515,6 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
     {
         [JsonPropertyName("input_tokens")]
         public int InputTokens { get; set; }
-
         [JsonPropertyName("output_tokens")]
         public int OutputTokens { get; set; }
     }
