@@ -177,6 +177,7 @@ export interface GasFile {
 export interface DeployReport {
   generatedUtc: string;
   spreadsheetId: string;
+  webViewLink: string;
   scriptId: string;
   fileCount: number;
   filesDeployed: string[];
@@ -187,7 +188,7 @@ export interface DeployReport {
 // Migrate types
 export interface MigrateReport {
   generatedUtc: string;
-  upload: UploadReport;
+  upload?: UploadReport;
   extract: ExtractReport;
   convert: ConvertReport;
   deploys: DeployReport[];

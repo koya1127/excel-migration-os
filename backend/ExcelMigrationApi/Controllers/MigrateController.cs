@@ -49,7 +49,7 @@ public class MigrateController : ControllerBase
     }
 
     /// <summary>
-    /// End-to-end migration: upload -> extract -> convert -> deploy
+    /// End-to-end migration: extract -> convert -> create spreadsheet + deploy GAS
     /// </summary>
     [HttpPost]
     [RequireSubscription]
@@ -135,11 +135,7 @@ public class MigrateController : ControllerBase
                 filePaths.Add(filePath);
             }
 
-            // Step 1: Upload to Google Drive (convert to Sheets)
-            var uploadReport = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId, googleToken);
-            migrateReport.Upload = uploadReport;
-
-            // Step 2: Extract VBA modules from .xlsm files
+            // Step 1: Extract VBA modules from .xlsm files
             var xlsmPaths = filePaths.Where(f =>
                 Path.GetExtension(f).Equals(".xlsm", StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -157,7 +153,7 @@ public class MigrateController : ControllerBase
                 return Ok(migrateReport);
             }
 
-            // Step 3: Convert VBA to GAS
+            // Step 2: Convert VBA to GAS
             var convertRequests = new List<ConvertRequest>();
             foreach (var module in extractReport.Modules)
             {
@@ -213,7 +209,7 @@ public class MigrateController : ControllerBase
                 }
             }
 
-            // Step 4: Deploy GAS per source file to its corresponding spreadsheet
+            // Step 3: Deploy GAS — create new spreadsheet per source file with usage sheet
             var successfulConversions = convertReport.Results
                 .Where(r => r.Status == "success")
                 .ToList();
@@ -223,46 +219,24 @@ public class MigrateController : ControllerBase
                 return Ok(migrateReport);
             }
 
-            // Build a mapping from source file name (WITH extension) to uploaded spreadsheet
-            // Using full filename prevents basename collisions (e.g. report.xlsx vs report.xlsm)
-            var uploadMap = uploadReport.Files
-                .Where(f => f.Status == "success" && !string.IsNullOrEmpty(f.DriveFileId))
-                .ToDictionary(f => f.FileName, f => f, StringComparer.OrdinalIgnoreCase);
-
-            // Group converted modules by source file (full name with extension)
+            // Group converted modules by source file
             var modulesByFile = successfulConversions
                 .GroupBy(r => r.SourceFile ?? "")
                 .ToList();
 
             foreach (var group in modulesByFile)
             {
-                if (!uploadMap.TryGetValue(group.Key, out var uploadResult))
+                var gasFiles = group.Select(r => new GasFile
                 {
-                    // No matching upload found — skip to prevent deploying to the wrong spreadsheet
-                    _logger.LogWarning("Deploy skipped: no matching upload for source file '{SourceFile}'", group.Key);
-                    migrateReport.Deploys.Add(new DeployReport
-                    {
-                        Status = "skipped",
-                        Error = $"アップロード先が見つかりません: {group.Key}"
-                    });
-                    continue;
-                }
+                    Name = r.ModuleName,
+                    Source = r.GasCode,
+                    Type = "SERVER_JS"
+                }).ToList();
 
-                if (string.IsNullOrEmpty(uploadResult.DriveFileId))
-                    continue;
+                var usageSheet = DeployService.BuildUsageSheet(group.Key, group);
 
-                var deployRequest = new DeployRequest
-                {
-                    SpreadsheetId = uploadResult.DriveFileId,
-                    GasFiles = group.Select(r => new GasFile
-                    {
-                        Name = r.ModuleName,
-                        Source = r.GasCode,
-                        Type = "SERVER_JS"
-                    }).ToList()
-                };
-
-                var deployReport = await _deployService.Deploy(deployRequest, googleToken);
+                var deployReport = await _deployService.CreateAndDeploy(
+                    group.Key, gasFiles, usageSheet, folderId, googleToken);
                 migrateReport.Deploys.Add(deployReport);
             }
 

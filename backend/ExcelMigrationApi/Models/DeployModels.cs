@@ -42,11 +42,19 @@ public class DeployReport
 {
     public string GeneratedUtc { get; set; } = string.Empty;
     public string SpreadsheetId { get; set; } = string.Empty;
+    public string WebViewLink { get; set; } = string.Empty;
     public string ScriptId { get; set; } = string.Empty;
     public int FileCount { get; set; }
     public List<string> FilesDeployed { get; set; } = new();
     public string Status { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
+}
+
+public class UsageSheetInfo
+{
+    public string OriginalFileName { get; set; } = string.Empty;
+    public List<string> MenuItems { get; set; } = new();
+    public List<string> Limitations { get; set; } = new();
 }
 
 public class MigrateRequest
