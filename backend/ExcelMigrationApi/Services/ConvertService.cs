@@ -153,6 +153,14 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
         }
 
         var agentResult = JsonSerializer.Deserialize<AgentConvertResult>(responseBody);
+
+        // If agent returned an error, throw to trigger fallback to direct API
+        if (agentResult?.Status == "error")
+        {
+            _logger.LogWarning("Agent returned error for {Module}: {Error}", request.ModuleName, agentResult.Error);
+            throw new HttpRequestException($"Agent conversion failed: {agentResult.Error}");
+        }
+
         return new ConvertResult
         {
             ModuleName = agentResult?.ModuleName ?? request.ModuleName,
