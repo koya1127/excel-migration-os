@@ -55,6 +55,7 @@ public class UsageSheetInfo
     public string OriginalFileName { get; set; } = string.Empty;
     public List<string> MenuItems { get; set; } = new();
     public List<string> Limitations { get; set; } = new();
+    public List<string> OriginalSheetNames { get; set; } = new();
 }
 
 public class MigrateRequest

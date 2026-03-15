@@ -49,7 +49,7 @@ public class MigrateController : ControllerBase
     }
 
     /// <summary>
-    /// End-to-end migration: extract -> convert -> create spreadsheet + deploy GAS
+    /// End-to-end migration: upload -> extract -> convert -> deploy GAS + usage sheet
     /// </summary>
     [HttpPost]
     [RequireSubscription]
@@ -135,7 +135,11 @@ public class MigrateController : ControllerBase
                 filePaths.Add(filePath);
             }
 
-            // Step 1: Extract VBA modules from .xlsm files
+            // Step 1: Upload to Google Drive (convert to Sheets)
+            var uploadReport = await _uploadService.UploadFiles(filePaths, convertToSheets, folderId, googleToken);
+            migrateReport.Upload = uploadReport;
+
+            // Step 2: Extract VBA modules from .xlsm files
             var xlsmPaths = filePaths.Where(f =>
                 Path.GetExtension(f).Equals(".xlsm", StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -153,7 +157,7 @@ public class MigrateController : ControllerBase
                 return Ok(migrateReport);
             }
 
-            // Step 2: Convert VBA to GAS
+            // Step 3: Convert VBA to GAS
             var convertRequests = new List<ConvertRequest>();
             foreach (var module in extractReport.Modules)
             {
@@ -209,7 +213,7 @@ public class MigrateController : ControllerBase
                 }
             }
 
-            // Step 3: Deploy GAS — create new spreadsheet per source file with usage sheet
+            // Step 4: Deploy GAS to uploaded spreadsheets + add usage sheet
             var successfulConversions = convertReport.Results
                 .Where(r => r.Status == "success")
                 .ToList();
@@ -219,6 +223,11 @@ public class MigrateController : ControllerBase
                 return Ok(migrateReport);
             }
 
+            // Build mapping from source file to uploaded spreadsheet
+            var uploadMap = uploadReport.Files
+                .Where(f => f.Status == "success" && !string.IsNullOrEmpty(f.DriveFileId))
+                .ToDictionary(f => f.FileName, f => f, StringComparer.OrdinalIgnoreCase);
+
             // Group converted modules by source file
             var modulesByFile = successfulConversions
                 .GroupBy(r => r.SourceFile ?? "")
@@ -226,6 +235,17 @@ public class MigrateController : ControllerBase
 
             foreach (var group in modulesByFile)
             {
+                if (!uploadMap.TryGetValue(group.Key, out var uploadResult))
+                {
+                    _logger.LogWarning("Deploy skipped: no matching upload for source file '{SourceFile}'", group.Key);
+                    migrateReport.Deploys.Add(new DeployReport
+                    {
+                        Status = "skipped",
+                        Error = $"アップロード先が見つかりません: {group.Key}"
+                    });
+                    continue;
+                }
+
                 var gasFiles = group.Select(r => new GasFile
                 {
                     Name = r.ModuleName,
@@ -233,11 +253,19 @@ public class MigrateController : ControllerBase
                     Type = "SERVER_JS"
                 }).ToList();
 
-                var usageSheet = DeployService.BuildUsageSheet(group.Key, group);
-
-                var deployReport = await _deployService.CreateAndDeploy(
-                    group.Key, gasFiles, usageSheet, folderId, googleToken);
+                // Deploy GAS
+                var deployRequest = new DeployRequest
+                {
+                    SpreadsheetId = uploadResult.DriveFileId,
+                    GasFiles = gasFiles
+                };
+                var deployReport = await _deployService.Deploy(deployRequest, googleToken);
+                deployReport.WebViewLink = uploadResult.WebViewLink;
                 migrateReport.Deploys.Add(deployReport);
+
+                // Add usage sheet to the spreadsheet
+                var usageSheet = DeployService.BuildUsageSheet(group.Key, group);
+                await _deployService.AddUsageSheet(uploadResult.DriveFileId, usageSheet, googleToken);
             }
 
             return Ok(migrateReport);

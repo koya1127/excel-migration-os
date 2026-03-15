@@ -54,8 +54,8 @@ public class DeployService
             await SendRequest(HttpMethod.Patch, moveUrl, "{}", googleToken);
         }
 
-        // Step 3: Write "使い方" sheet
-        await WriteUsageSheet(spreadsheetId, usageSheet, googleToken);
+        // Step 3: Write "使い方" sheet (delete default Sheet1 since this is a new empty spreadsheet)
+        await WriteUsageSheet(spreadsheetId, usageSheet, googleToken, deleteDefault: true);
 
         // Step 4: Deploy GAS
         var deployRequest = new DeployRequest
@@ -68,29 +68,38 @@ public class DeployService
         return report;
     }
 
-    private async Task WriteUsageSheet(string spreadsheetId, UsageSheetInfo info, string googleToken)
+    /// <summary>
+    /// Add a "使い方" sheet to an existing spreadsheet (does not delete other sheets).
+    /// </summary>
+    public async Task AddUsageSheet(string spreadsheetId, UsageSheetInfo info, string googleToken)
+    {
+        await WriteUsageSheet(spreadsheetId, info, googleToken);
+    }
+
+    private async Task WriteUsageSheet(string spreadsheetId, UsageSheetInfo info, string googleToken, bool deleteDefault = false)
     {
         try
         {
-            // Get the default sheet ID (Sheet1)
-            var getRes = await SendRequest(HttpMethod.Get, $"{SheetsApiBase}/{spreadsheetId}?fields=sheets.properties", "", googleToken);
-            int defaultSheetId = 0;
-            if (getRes.IsSuccess)
+            // Add "使い方" sheet
+            var requests = new List<object>
             {
-                using var doc = JsonDocument.Parse(getRes.Body);
-                defaultSheetId = doc.RootElement.GetProperty("sheets")[0]
-                    .GetProperty("properties").GetProperty("sheetId").GetInt32();
+                new { addSheet = new { properties = new { title = "使い方", index = 0 } } }
+            };
+
+            if (deleteDefault)
+            {
+                // Get the default sheet ID to delete (only for empty spreadsheets)
+                var getRes = await SendRequest(HttpMethod.Get, $"{SheetsApiBase}/{spreadsheetId}?fields=sheets.properties", "", googleToken);
+                if (getRes.IsSuccess)
+                {
+                    using var doc = JsonDocument.Parse(getRes.Body);
+                    var defaultSheetId = doc.RootElement.GetProperty("sheets")[0]
+                        .GetProperty("properties").GetProperty("sheetId").GetInt32();
+                    requests.Add(new { deleteSheet = new { sheetId = defaultSheetId } });
+                }
             }
 
-            // Add "使い方" sheet and delete default sheet
-            var batchBody = JsonSerializer.Serialize(new
-            {
-                requests = new object[]
-                {
-                    new { addSheet = new { properties = new { title = "使い方", index = 0 } } },
-                    new { deleteSheet = new { sheetId = defaultSheetId } }
-                }
-            });
+            var batchBody = JsonSerializer.Serialize(new { requests });
             await SendRequest(HttpMethod.Post, $"{SheetsApiBase}/{spreadsheetId}:batchUpdate", batchBody, googleToken);
 
             // Build content rows
