@@ -58,8 +58,9 @@ public class StripeUsageService
         var response = await httpClient.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError("Stripe usage report failed with status {StatusCode} for customer {CustomerId}", response.StatusCode, stripeCustomerId);
-            throw new Exception($"Stripe usage report failed ({response.StatusCode})");
+            var body = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Stripe usage report failed with status {StatusCode} for customer {CustomerId}: {Body}", response.StatusCode, stripeCustomerId, body);
+            throw new Exception($"Stripe usage report failed ({response.StatusCode}): {body}");
         }
     }
 
