@@ -198,7 +198,7 @@ public class MigrateController : ControllerBase
                 {
                     try
                     {
-                        var idempotencyKey = BuildIdempotencyKey("migrate", convertRequests);
+                        var idempotencyKey = BuildIdempotencyKey("migrate", convertRequests, totalTokens);
                         await _stripeUsageService.ReportUsage(meta.StripeCustomerId, totalTokens, idempotencyKey);
                     }
                     catch (Exception ex)
@@ -276,7 +276,7 @@ public class MigrateController : ControllerBase
         }
     }
 
-    private static string BuildIdempotencyKey(string prefix, List<ConvertRequest> requests)
+    private static string BuildIdempotencyKey(string prefix, List<ConvertRequest> requests, int totalTokens = 0)
     {
         using var sha = SHA256.Create();
         var sb = new StringBuilder();
@@ -285,6 +285,9 @@ public class MigrateController : ControllerBase
             sb.Append(r.ModuleName).Append(':').Append(r.VbaCode?.Length ?? 0).Append(':');
             sb.Append(r.VbaCode ?? "");
         }
+        // Include token count + timestamp (hour granularity) to avoid idempotency conflicts
+        sb.Append(':').Append(totalTokens);
+        sb.Append(':').Append(DateTimeOffset.UtcNow.ToString("yyyyMMddHH"));
         var hash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
         return $"{prefix}-{hash}";
     }
