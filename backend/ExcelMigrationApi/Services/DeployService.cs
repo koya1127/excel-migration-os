@@ -323,6 +323,9 @@ public class DeployService
                 }
             }
 
+            // Final pass: strip technical jargon for end users
+            translated = SimplifyForEndUser(translated);
+
             // Normalize for dedup: lowercase, remove punctuation
             var normalized = Regex.Replace(translated.ToLowerInvariant(), @"[。、．\.\s]", "");
 
@@ -342,6 +345,51 @@ public class DeployService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Strip technical jargon from limitation text so non-technical users can understand.
+    /// </summary>
+    private static string SimplifyForEndUser(string text)
+    {
+        // Remove VBA/GAS technical terms that mean nothing to end users
+        text = Regex.Replace(text, @"Workbook_BeforeClose\S*", "「閉じる前の処理」");
+        text = Regex.Replace(text, @"Worksheet_FollowHyperlink\S*", "「リンクをクリックした時の処理」");
+        text = Regex.Replace(text, @"Worksheet_SelectionChange\S*", "「セル選択時の処理」");
+        text = Regex.Replace(text, @"Workbook_BeforeSave\S*", "「保存前の処理」");
+        text = Regex.Replace(text, @"Worksheet_Activate\S*", "「シート切替時の処理」");
+        text = Regex.Replace(text, @"Worksheet_Calculate\S*", "「再計算時の処理」");
+
+        // Replace function names with descriptive Japanese
+        text = Regex.Replace(text, @"\bhSearch\b", "検索", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\bgoBack\b", "「戻る」", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\bcsvDownload\b", "CSVダウンロード", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\bsearchRng\b", "検索範囲", RegexOptions.IgnoreCase);
+
+        // Replace technical GAS/VBA terms
+        text = Regex.Replace(text, @"Google Apps Script", "スプレッドシートのマクロ");
+        text = Regex.Replace(text, @"\bGAS\b", "スプレッドシートのマクロ");
+        text = Regex.Replace(text, @"\bVBA\b", "Excelマクロ");
+        text = Regex.Replace(text, @"ControlFormat", "フォームの部品");
+        text = Regex.Replace(text, @"Shapes", "図形・ボタン");
+        text = Regex.Replace(text, @"Radio button", "ラジオボタン（選択肢）");
+        text = Regex.Replace(text, @"WScript\.Network", "Windowsのネットワーク機能");
+        text = Regex.Replace(text, @"Local file I/O.*$", "パソコン上のファイル読み書き機能");
+        text = Regex.Replace(text, @"Dir\(.*?\)", "フォルダ内のファイル一覧取得");
+        text = Regex.Replace(text, @"FileCopy", "ファイルコピー");
+        text = Regex.Replace(text, @"StrConv\(.*?\)", "文字の全角半角変換");
+        text = Regex.Replace(text, @"ThisWorkbook\.Path", "ファイルの保存場所");
+        text = Regex.Replace(text, @"DriveApp", "Googleドライブ");
+        text = Regex.Replace(text, @"Module1\.", "");
+        text = Regex.Replace(text, @"cell-based selection", "セル選択方式");
+        text = Regex.Replace(text, @"onOpen", "スプレッドシート起動時の処理");
+        text = Regex.Replace(text, @"onChange trigger", "変更検知の仕組み");
+        text = Regex.Replace(text, @"installable trigger", "自動実行の仕組み");
+
+        // Clean up double spaces / leading dots
+        text = Regex.Replace(text, @"\s{2,}", " ").Trim();
+
+        return text;
     }
 
     public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
