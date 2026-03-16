@@ -209,31 +209,40 @@ public class DeployService
 
     /// <summary>
     /// Aggressively deduplicate menu items that represent the same function.
-    /// e.g. "検索 [部材・部品]", "検索 (部材・部品)", "検索 (search(部材・部品))" → keep first only
+    /// Strategy: extract "core action" (Japanese text before any brackets/parens),
+    /// group by core, keep only the most descriptive unique variant per core.
     /// </summary>
     private static List<string> DeduplicateMenuItems(List<string> items)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<string>();
+        var seenCores = new HashSet<string>();
+        // Track full normalized forms to catch exact dupes
+        var seenFull = new HashSet<string>();
 
         foreach (var item in items)
         {
-            // Normalize: remove all brackets/parens, lowercase, remove spaces
-            var normalized = Regex.Replace(item, @"[\[\]\(\)（）\s　\""\']", "").ToLowerInvariant();
-            // Also strip common prefixes like "search" that may be function names
-            var normalized2 = Regex.Replace(normalized, @"^search", "");
-
-            if (seen.Contains(normalized) || seen.Contains(normalized2))
+            // Skip items that look like internal function references (e.g. "search(部材・部品) - 検索")
+            if (Regex.IsMatch(item, @"^[a-zA-Z]+\(.+\)\s*-\s*"))
                 continue;
 
-            seen.Add(normalized);
-            if (!string.IsNullOrEmpty(normalized2))
-                seen.Add(normalized2);
+            // Extract core action: Japanese text before first bracket/paren/dash, trimmed
+            var core = Regex.Replace(item, @"[\s　]*[\[\(（\-].*$", "").Trim();
+            if (string.IsNullOrEmpty(core)) core = item;
 
-            // Skip items that look like internal function names (e.g. "search(部材・部品) - 検索")
-            if (Regex.IsMatch(item, @"^\w+\(.+\)\s*-\s*"))
+            // Full normalized: strip everything non-essential for exact dupe check
+            var fullNorm = Regex.Replace(item, @"[\[\]\(\)（）\s　\""\'\-]", "").ToLowerInvariant();
+            // Remove "search" function name prefix that leaks from code
+            fullNorm = Regex.Replace(fullNorm, @"search", "");
+
+            if (seenFull.Contains(fullNorm))
+                continue;
+            seenFull.Add(fullNorm);
+
+            // If this core action was already seen, skip (e.g. "検索" already added, skip "検索 (部材・部品)")
+            if (seenCores.Contains(core))
                 continue;
 
+            seenCores.Add(core);
             result.Add(item);
         }
 
