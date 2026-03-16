@@ -429,75 +429,66 @@ public class DeployService
     }
 
     /// <summary>
-    /// Strip technical jargon from limitation text so non-technical users can understand.
+    /// Simplify a limitation line for non-technical end users.
+    /// Strategy: extract the "subject" (what feature is affected), then produce a clean one-liner.
+    /// If the line is too technical to salvage, replace it entirely.
     /// </summary>
     private static string SimplifyForEndUser(string text)
     {
-        // Remove VBA/GAS technical terms that mean nothing to end users
-        text = Regex.Replace(text, @"Workbook_BeforeClose\S*", "「閉じる前の処理」");
-        text = Regex.Replace(text, @"Worksheet_FollowHyperlink\S*", "「リンクをクリックした時の処理」");
-        text = Regex.Replace(text, @"Worksheet_SelectionChange\S*", "「セル選択時の処理」");
-        text = Regex.Replace(text, @"Workbook_BeforeSave\S*", "「保存前の処理」");
-        text = Regex.Replace(text, @"Worksheet_Activate\S*", "「シート切替時の処理」");
-        text = Regex.Replace(text, @"Worksheet_Calculate\S*", "「再計算時の処理」");
+        // Map of known subjects → plain Japanese descriptions
+        var subjectMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Workbook_BeforeClose", "ファイルを閉じる前の自動処理" },
+            { "Worksheet_FollowHyperlink", "リンクをクリックした時の自動処理" },
+            { "Worksheet_SelectionChange", "セルを選択した時の自動処理" },
+            { "Workbook_BeforeSave", "保存前の自動処理" },
+            { "Worksheet_Activate", "シートを切り替えた時の自動処理" },
+            { "Worksheet_Calculate", "再計算時の自動処理" },
+            { "hSearch", "検索機能" },
+            { "goBack", "「戻る」機能" },
+            { "csvDownload", "CSVダウンロード機能" },
+            { "displayData", "データ表示機能" },
+            { "FollowHyperlink", "リンクをクリックした時の自動処理" },
+            { "FileCopy", "ファイルコピー機能" },
+            { "WScript.Network", "ネットワーク接続機能" },
+            { "Local file I/O", "パソコン上のファイル読み書き機能" },
+            { "Dir(", "フォルダ内ファイル一覧の取得機能" },
+            { "StrConv", "文字の全角半角変換機能" },
+            { "Radio button", "ラジオボタン（選択肢）の状態取得" },
+            { "ThisWorkbook.Path", "ファイルの保存場所の取得機能" },
+        };
 
-        // Replace function names with descriptive Japanese (no \b — breaks with Japanese chars)
-        text = text.Replace("hSearch", "検索");
-        text = text.Replace("hsearch", "検索");
-        text = text.Replace("goBack", "「戻る」");
-        text = text.Replace("goback", "「戻る」");
-        text = text.Replace("csvDownload", "CSVダウンロード");
-        text = text.Replace("csvdownload", "CSVダウンロード");
-        text = text.Replace("searchRng", "検索範囲");
+        // Check if any known subject is in the text
+        foreach (var (key, description) in subjectMap)
+        {
+            if (text.Contains(key, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{description}は現在お使いいただけません";
+            }
+        }
 
-        // Replace technical GAS/VBA terms
-        text = text.Replace("Google Apps Script", "スプレッドシートのマクロ");
-        text = text.Replace("Apps Script", "スプレッドシートのマクロ");
-        text = Regex.Replace(text, @"(?<![a-zA-Z])GAS(?![a-zA-Z])", "スプレッドシートのマクロ");
-        text = Regex.Replace(text, @"(?<![a-zA-Z])VBA(?![a-zA-Z])", "Excelマクロ");
-        text = text.Replace("ControlFormat", "フォームの部品");
-        text = text.Replace("Shapes", "図形・ボタン");
-        text = text.Replace("Radio button", "ラジオボタン（選択肢）");
-        text = text.Replace("radio button", "ラジオボタン（選択肢）");
-        text = text.Replace("WScript.Network", "Windowsのネットワーク機能");
-        text = Regex.Replace(text, @"Local file I/O.*$", "パソコン上のファイル読み書き機能");
-        text = Regex.Replace(text, @"Dir\(.*?\)", "フォルダ内のファイル一覧取得");
-        text = text.Replace("FileCopy", "ファイルコピー");
-        text = Regex.Replace(text, @"StrConv\(.*?\)", "文字の全角半角変換");
-        text = text.Replace("ThisWorkbook.Path", "ファイルの保存場所");
-        text = text.Replace("DriveApp", "Googleドライブ");
-        text = text.Replace("Module1.", "");
-        text = text.Replace("cell-based selection", "セル選択方式");
-        text = text.Replace("onOpen", "スプレッドシート起動時の処理");
-        text = text.Replace("onChange trigger", "変更検知の仕組み");
-        text = text.Replace("installable trigger", "自動実行の仕組み");
+        // If line contains English programming terms, replace generically
+        if (Regex.IsMatch(text, @"[a-zA-Z]{3,}\(") ||       // function calls like foo()
+            Regex.IsMatch(text, @"[a-z]+[A-Z]") ||           // camelCase
+            text.Contains("Module1") ||
+            text.Contains("implement", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("trigger", StringComparison.OrdinalIgnoreCase))
+        {
+            // Try to extract a Japanese description if present
+            var jaMatch = Regex.Match(text, @"[ぁ-ん|ァ-ヴ|亜-熙|ー]+.{0,20}");
+            if (jaMatch.Success && jaMatch.Value.Length >= 4)
+                return $"{jaMatch.Value.TrimEnd('。', '、', ' ')}は現在お使いいただけません";
+            return "一部の機能は現在お使いいただけません";
+        }
 
-        // Strip remaining English function/variable names (camelCase, PascalCase patterns)
-        text = Regex.Replace(text, @"displayData", "データ表示");
-        text = Regex.Replace(text, @"sub検索", "検索");
-        text = Regex.Replace(text, @"Module1から呼び出す必要があります", "機能は現在お使いいただけません");
-        // Generic: strip any remaining camelCase/PascalCase English identifiers
-        text = Regex.Replace(text, @"\b[a-z]+[A-Z][a-zA-Z]*\b", "一部の機能");
-        text = Regex.Replace(text, @"\b[A-Z][a-z]+[A-Z][a-zA-Z]*\b", "一部の機能");
-
-        // Convert developer-speak to user-speak
-        text = text.Replace("の実装が必要です", "機能は現在お使いいただけません");
-        text = text.Replace("を実装してください", "機能は現在お使いいただけません");
-        text = text.Replace("の実装を", "機能は現在お使いいただけません");
+        // For Japanese-only text, just clean up developer patterns
+        text = text.Replace("の実装が必要です", "は現在お使いいただけません");
+        text = text.Replace("を実装してください", "は現在お使いいただけません");
         text = text.Replace("実装してください", "は現在お使いいただけません");
-        text = text.Replace("呼び出す必要があります", "機能は現在お使いいただけません");
-        text = Regex.Replace(text, @"関数.*?必要です", "機能は現在お使いいただけません");
-        // Catch "〇〇の処理を実装" patterns
-        text = Regex.Replace(text, @"の処理を.*?実装", "機能は現在お使いいただけません");
-        // Catch remaining "サポートされていません" patterns
         text = text.Replace("サポートされていません", "お使いいただけません");
         text = text.Replace("未対応です", "お使いいただけません");
 
-        // Clean up double spaces / leading dots / duplicate 機能
-        text = Regex.Replace(text, @"(機能は?){2,}", "機能は");
-        text = Regex.Replace(text, @"\s{2,}", " ").Trim();
-
-        return text;
+        return text.Trim();
     }
 
     /// <summary>
