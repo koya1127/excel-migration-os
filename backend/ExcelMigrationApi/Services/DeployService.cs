@@ -164,11 +164,89 @@ public class DeployService
             var valueBody = JsonSerializer.Serialize(new { values = rows });
             var url = $"{SheetsApiBase}/{spreadsheetId}/values/使い方!A1?valueInputOption=RAW";
             await SendRequest(HttpMethod.Put, url, valueBody, googleToken);
+
+            // Format the sheet: widen column A, bold headers, background colors
+            await FormatUsageSheet(spreadsheetId, rows.Count, googleToken);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to write usage sheet for {SpreadsheetId}", spreadsheetId);
             // Non-fatal: GAS deploy can still proceed
+        }
+    }
+
+    /// <summary>
+    /// Format the usage sheet: widen column A, bold section headers, light background colors.
+    /// </summary>
+    private async Task FormatUsageSheet(string spreadsheetId, int totalRows, string googleToken)
+    {
+        try
+        {
+            // First, get the sheet ID for "使い方"
+            var getRes = await SendRequest(HttpMethod.Get,
+                $"{SheetsApiBase}/{spreadsheetId}?fields=sheets.properties", "", googleToken);
+            if (!getRes.IsSuccess) return;
+
+            int sheetId = 0;
+            using (var doc = JsonDocument.Parse(getRes.Body))
+            {
+                foreach (var sheet in doc.RootElement.GetProperty("sheets").EnumerateArray())
+                {
+                    var title = sheet.GetProperty("properties").GetProperty("title").GetString();
+                    if (title == "使い方")
+                    {
+                        sheetId = sheet.GetProperty("properties").GetProperty("sheetId").GetInt32();
+                        break;
+                    }
+                }
+            }
+
+            var formatRequests = new List<object>
+            {
+                // Widen column A to 800px so text doesn't overflow
+                new
+                {
+                    updateDimensionProperties = new
+                    {
+                        range = new { sheetId, dimension = "COLUMNS", startIndex = 0, endIndex = 1 },
+                        properties = new { pixelSize = 800 },
+                        fields = "pixelSize"
+                    }
+                },
+                // Bold + larger font for title row (row 0)
+                new
+                {
+                    repeatCell = new
+                    {
+                        range = new { sheetId, startRowIndex = 0, endRowIndex = 1, startColumnIndex = 0, endColumnIndex = 1 },
+                        cell = new
+                        {
+                            userEnteredFormat = new
+                            {
+                                textFormat = new { bold = true, fontSize = 14 },
+                                backgroundColor = new { red = 0.9, green = 0.94, blue = 1.0 }
+                            }
+                        },
+                        fields = "userEnteredFormat(textFormat,backgroundColor)"
+                    }
+                },
+                // Freeze top row
+                new
+                {
+                    updateSheetProperties = new
+                    {
+                        properties = new { sheetId, gridProperties = new { frozenRowCount = 1 } },
+                        fields = "gridProperties.frozenRowCount"
+                    }
+                }
+            };
+
+            var batchBody = JsonSerializer.Serialize(new { requests = formatRequests });
+            await SendRequest(HttpMethod.Post, $"{SheetsApiBase}/{spreadsheetId}:batchUpdate", batchBody, googleToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to format usage sheet (non-fatal)");
         }
     }
 
