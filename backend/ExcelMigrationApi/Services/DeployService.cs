@@ -438,31 +438,36 @@ public class DeployService
         text = Regex.Replace(text, @"Worksheet_Activate\S*", "「シート切替時の処理」");
         text = Regex.Replace(text, @"Worksheet_Calculate\S*", "「再計算時の処理」");
 
-        // Replace function names with descriptive Japanese
-        text = Regex.Replace(text, @"\bhSearch\b", "検索", RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"\bgoBack\b", "「戻る」", RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"\bcsvDownload\b", "CSVダウンロード", RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"\bsearchRng\b", "検索範囲", RegexOptions.IgnoreCase);
+        // Replace function names with descriptive Japanese (no \b — breaks with Japanese chars)
+        text = text.Replace("hSearch", "検索");
+        text = text.Replace("hsearch", "検索");
+        text = text.Replace("goBack", "「戻る」");
+        text = text.Replace("goback", "「戻る」");
+        text = text.Replace("csvDownload", "CSVダウンロード");
+        text = text.Replace("csvdownload", "CSVダウンロード");
+        text = text.Replace("searchRng", "検索範囲");
 
         // Replace technical GAS/VBA terms
-        text = Regex.Replace(text, @"Google Apps Script", "スプレッドシートのマクロ");
-        text = Regex.Replace(text, @"\bGAS\b", "スプレッドシートのマクロ");
-        text = Regex.Replace(text, @"\bVBA\b", "Excelマクロ");
-        text = Regex.Replace(text, @"ControlFormat", "フォームの部品");
-        text = Regex.Replace(text, @"Shapes", "図形・ボタン");
-        text = Regex.Replace(text, @"Radio button", "ラジオボタン（選択肢）");
-        text = Regex.Replace(text, @"WScript\.Network", "Windowsのネットワーク機能");
+        text = text.Replace("Google Apps Script", "スプレッドシートのマクロ");
+        text = text.Replace("Apps Script", "スプレッドシートのマクロ");
+        text = Regex.Replace(text, @"(?<![a-zA-Z])GAS(?![a-zA-Z])", "スプレッドシートのマクロ");
+        text = Regex.Replace(text, @"(?<![a-zA-Z])VBA(?![a-zA-Z])", "Excelマクロ");
+        text = text.Replace("ControlFormat", "フォームの部品");
+        text = text.Replace("Shapes", "図形・ボタン");
+        text = text.Replace("Radio button", "ラジオボタン（選択肢）");
+        text = text.Replace("radio button", "ラジオボタン（選択肢）");
+        text = text.Replace("WScript.Network", "Windowsのネットワーク機能");
         text = Regex.Replace(text, @"Local file I/O.*$", "パソコン上のファイル読み書き機能");
         text = Regex.Replace(text, @"Dir\(.*?\)", "フォルダ内のファイル一覧取得");
-        text = Regex.Replace(text, @"FileCopy", "ファイルコピー");
+        text = text.Replace("FileCopy", "ファイルコピー");
         text = Regex.Replace(text, @"StrConv\(.*?\)", "文字の全角半角変換");
-        text = Regex.Replace(text, @"ThisWorkbook\.Path", "ファイルの保存場所");
-        text = Regex.Replace(text, @"DriveApp", "Googleドライブ");
-        text = Regex.Replace(text, @"Module1\.", "");
-        text = Regex.Replace(text, @"cell-based selection", "セル選択方式");
-        text = Regex.Replace(text, @"onOpen", "スプレッドシート起動時の処理");
-        text = Regex.Replace(text, @"onChange trigger", "変更検知の仕組み");
-        text = Regex.Replace(text, @"installable trigger", "自動実行の仕組み");
+        text = text.Replace("ThisWorkbook.Path", "ファイルの保存場所");
+        text = text.Replace("DriveApp", "Googleドライブ");
+        text = text.Replace("Module1.", "");
+        text = text.Replace("cell-based selection", "セル選択方式");
+        text = text.Replace("onOpen", "スプレッドシート起動時の処理");
+        text = text.Replace("onChange trigger", "変更検知の仕組み");
+        text = text.Replace("installable trigger", "自動実行の仕組み");
 
         // Clean up double spaces / leading dots
         text = Regex.Replace(text, @"\s{2,}", " ").Trim();
