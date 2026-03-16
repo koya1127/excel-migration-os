@@ -472,14 +472,29 @@ public class DeployService
         text = text.Replace("onChange trigger", "変更検知の仕組み");
         text = text.Replace("installable trigger", "自動実行の仕組み");
 
+        // Strip remaining English function/variable names (camelCase, PascalCase patterns)
+        text = Regex.Replace(text, @"displayData", "データ表示");
+        text = Regex.Replace(text, @"sub検索", "検索");
+        text = Regex.Replace(text, @"Module1から呼び出す必要があります", "機能は現在お使いいただけません");
+        // Generic: strip any remaining camelCase/PascalCase English identifiers
+        text = Regex.Replace(text, @"\b[a-z]+[A-Z][a-zA-Z]*\b", "一部の機能");
+        text = Regex.Replace(text, @"\b[A-Z][a-z]+[A-Z][a-zA-Z]*\b", "一部の機能");
+
         // Convert developer-speak to user-speak
         text = text.Replace("の実装が必要です", "機能は現在お使いいただけません");
         text = text.Replace("を実装してください", "機能は現在お使いいただけません");
         text = text.Replace("の実装を", "機能は現在お使いいただけません");
         text = text.Replace("実装してください", "は現在お使いいただけません");
+        text = text.Replace("呼び出す必要があります", "機能は現在お使いいただけません");
         text = Regex.Replace(text, @"関数.*?必要です", "機能は現在お使いいただけません");
+        // Catch "〇〇の処理を実装" patterns
+        text = Regex.Replace(text, @"の処理を.*?実装", "機能は現在お使いいただけません");
+        // Catch remaining "サポートされていません" patterns
+        text = text.Replace("サポートされていません", "お使いいただけません");
+        text = text.Replace("未対応です", "お使いいただけません");
 
-        // Clean up double spaces / leading dots
+        // Clean up double spaces / leading dots / duplicate 機能
+        text = Regex.Replace(text, @"(機能は?){2,}", "機能は");
         text = Regex.Replace(text, @"\s{2,}", " ").Trim();
 
         return text;
