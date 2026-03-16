@@ -153,8 +153,8 @@ public class DeployService
             rows.Add(new object[] { "　　→ ページを再読み込み（キーボードの F5 キー）してください。数秒待つと表示されます" });
             rows.Add(new object[] { "" });
             rows.Add(new object[] { "　・「承認が必要です」が何度も出る" });
-            rows.Add(new object[] { "　　→ 上部メニュー「拡張機能」→「Apps Script」を開いてください" });
-            rows.Add(new object[] { "　　→ 表示されたコードの上にある「▶ 実行」ボタンを押して、画面の指示に従って許可してください" });
+            rows.Add(new object[] { "　　→ 上部メニューの「拡張機能」をクリックし、一番下の項目を開いてください" });
+            rows.Add(new object[] { "　　→ 開いた画面の上にある「▶ 実行」ボタンを押して、画面の指示に従って許可してください" });
             rows.Add(new object[] { "" });
             rows.Add(new object[] { "　・機能を使ったらエラーが出た" });
             rows.Add(new object[] { "　　→ 上の「ご注意」に書かれている機能は、完全には移行できていない可能性があります" });
@@ -321,7 +321,10 @@ public class DeployService
                 continue;
 
             seenCores.Add(core);
-            result.Add(item);
+            // Clean the label before adding
+            var cleaned = CleanMenuLabel(item);
+            if (!string.IsNullOrEmpty(cleaned))
+                result.Add(cleaned);
         }
 
         return result;
@@ -469,10 +472,31 @@ public class DeployService
         text = text.Replace("onChange trigger", "変更検知の仕組み");
         text = text.Replace("installable trigger", "自動実行の仕組み");
 
+        // Convert developer-speak to user-speak
+        text = text.Replace("の実装が必要です", "機能は現在お使いいただけません");
+        text = text.Replace("を実装してください", "機能は現在お使いいただけません");
+        text = text.Replace("の実装を", "機能は現在お使いいただけません");
+        text = text.Replace("実装してください", "は現在お使いいただけません");
+        text = Regex.Replace(text, @"関数.*?必要です", "機能は現在お使いいただけません");
+
         // Clean up double spaces / leading dots
         text = Regex.Replace(text, @"\s{2,}", " ").Trim();
 
         return text;
+    }
+
+    /// <summary>
+    /// Clean menu item labels: remove leaked function names and technical prefixes.
+    /// </summary>
+    private static string CleanMenuLabel(string label)
+    {
+        // Remove "search(" prefix that leaks from GAS function names
+        label = Regex.Replace(label, @"^search\s*[\-\(]?\s*", "", RegexOptions.IgnoreCase);
+        // Remove trailing ")" if we stripped "search("
+        label = label.TrimEnd(')');
+        // Remove "Sheet1 - " style prefixes
+        label = Regex.Replace(label, @"^Sheet\d+\s*[\-:]\s*", "", RegexOptions.IgnoreCase);
+        return label.Trim();
     }
 
     public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
