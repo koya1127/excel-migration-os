@@ -80,7 +80,9 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
 - Output ONLY the .gs code, no explanations
 - CRITICAL: Ensure all braces {}, parentheses (), and brackets [] are properly closed
 - CRITICAL: The output must be syntactically valid JavaScript. Never truncate code.
-- If the VBA is too complex to fully convert, output a simplified working stub with TODO comments";
+- If the VBA is too complex to fully convert, output a simplified working stub with TODO comments
+- CRITICAL: All TODO comments MUST be written in Japanese. Example: // TODO: この機能はGASでは未対応です
+- Do NOT write TODO comments in English. Always use Japanese.";
 
     public ConvertService(IConfiguration config, ILogger<ConvertService> logger, IHttpClientFactory httpClientFactory)
     {

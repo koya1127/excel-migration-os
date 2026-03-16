@@ -104,46 +104,61 @@ public class DeployService
 
             // Build content rows
             var rows = new List<IList<object>>();
-            rows.Add(new object[] { "📋 このスプレッドシートについて" });
+            rows.Add(new object[] { "このスプレッドシートについて" });
             rows.Add(new object[] { "" });
             rows.Add(new object[] { $"元ファイル: {info.OriginalFileName}" });
             rows.Add(new object[] { $"移行日: {DateTime.Now:yyyy/MM/dd}" });
-            rows.Add(new object[] { $"移行ツール: Excel Migration OS" });
             rows.Add(new object[] { "" });
-            rows.Add(new object[] { "📖 マクロの使い方" });
+            rows.Add(new object[] { "マクロの使い方" });
             rows.Add(new object[] { "" });
-            rows.Add(new object[] { "1. スプレッドシートを開くと、メニューバーに「カスタムメニュー」が自動で追加されます" });
-            rows.Add(new object[] { "2. メニューから実行したい機能を選んでクリックしてください" });
-            rows.Add(new object[] { "3. 初回実行時に「承認が必要です」と表示されたら「許可」を選んでください" });
+            rows.Add(new object[] { "手順1. このスプレッドシートを開くと、画面上部のメニューバー（「ファイル」「編集」...の並び）の右端に" });
+            rows.Add(new object[] { "　　　 マクロ用のメニューが自動で追加されます（数秒かかる場合があります）" });
+            rows.Add(new object[] { "" });
+            rows.Add(new object[] { "手順2. 追加されたメニューをクリックし、実行したい機能を選んでください" });
+            rows.Add(new object[] { "" });
+            rows.Add(new object[] { "手順3.【初回のみ】「承認が必要です」という画面が出ます。以下の手順で許可してください：" });
+            rows.Add(new object[] { "　　　 ① 「権限を確認」をクリック" });
+            rows.Add(new object[] { "　　　 ② Googleアカウントを選択" });
+            rows.Add(new object[] { "　　　 ③ 「詳細」→「○○（安全ではないページ）に移動」をクリック" });
+            rows.Add(new object[] { "　　　 ④ 「許可」をクリック" });
+            rows.Add(new object[] { "　　　 ※ これは移行したマクロにスプレッドシートへのアクセスを許可するためです" });
+            rows.Add(new object[] { "　　　 ※ 一度許可すれば、次回以降は表示されません" });
             rows.Add(new object[] { "" });
 
             if (info.MenuItems.Count > 0)
             {
-                rows.Add(new object[] { "📌 メニュー項目一覧" });
+                rows.Add(new object[] { "使える機能の一覧" });
                 rows.Add(new object[] { "" });
                 foreach (var item in info.MenuItems)
                 {
-                    rows.Add(new object[] { $"・{item}" });
+                    rows.Add(new object[] { $"　・{item}" });
                 }
                 rows.Add(new object[] { "" });
             }
 
             if (info.Limitations.Count > 0)
             {
-                rows.Add(new object[] { "⚠️ 注意事項（自動変換で対応しきれなかった箇所）" });
+                rows.Add(new object[] { "ご注意（一部、自動変換できなかった機能があります）" });
                 rows.Add(new object[] { "" });
                 foreach (var limitation in info.Limitations)
                 {
-                    rows.Add(new object[] { $"・{limitation}" });
+                    rows.Add(new object[] { $"　・{limitation}" });
                 }
                 rows.Add(new object[] { "" });
             }
 
-            rows.Add(new object[] { "❓ 困ったときは" });
+            rows.Add(new object[] { "困ったときは" });
             rows.Add(new object[] { "" });
-            rows.Add(new object[] { "・メニューが表示されない → ページを再読み込み（F5）してください" });
-            rows.Add(new object[] { "・「承認が必要」が何度も出る → メニューの「拡張機能」→「Apps Script」を開き、関数を手動で一度実行してください" });
-            rows.Add(new object[] { "・エラーが出る → 上の「注意事項」に記載の未対応箇所が原因の可能性があります" });
+            rows.Add(new object[] { "　・メニューが出てこない" });
+            rows.Add(new object[] { "　　→ ページを再読み込み（キーボードの F5 キー）してください。数秒待つと表示されます" });
+            rows.Add(new object[] { "" });
+            rows.Add(new object[] { "　・「承認が必要です」が何度も出る" });
+            rows.Add(new object[] { "　　→ 上部メニュー「拡張機能」→「Apps Script」を開いてください" });
+            rows.Add(new object[] { "　　→ 表示されたコードの上にある「▶ 実行」ボタンを押して、画面の指示に従って許可してください" });
+            rows.Add(new object[] { "" });
+            rows.Add(new object[] { "　・機能を使ったらエラーが出た" });
+            rows.Add(new object[] { "　　→ 上の「ご注意」に書かれている機能は、完全には移行できていない可能性があります" });
+            rows.Add(new object[] { "　　→ 元のExcelファイルで同じ操作を試し、結果を比較してみてください" });
 
             // Write values
             var valueBody = JsonSerializer.Serialize(new { values = rows });
@@ -165,33 +180,159 @@ public class DeployService
         var info = new UsageSheetInfo { OriginalFileName = originalFileName };
         var menuRegex = new Regex(@"\.addItem\(['""](.+?)['""]", RegexOptions.Compiled);
         var todoRegex = new Regex(@"//\s*TODO:?\s*(.*)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        var rawMenuItems = new List<string>();
+        var rawLimitations = new List<string>();
 
         foreach (var result in results)
         {
             if (string.IsNullOrEmpty(result.GasCode)) continue;
 
-            // Extract menu items (deduplicate)
             foreach (Match m in menuRegex.Matches(result.GasCode))
-            {
-                var item = m.Groups[1].Value;
-                if (!info.MenuItems.Contains(item))
-                {
-                    info.MenuItems.Add(item);
-                }
-            }
+                rawMenuItems.Add(m.Groups[1].Value.Trim());
 
-            // Extract TODO/limitations
             foreach (Match m in todoRegex.Matches(result.GasCode))
             {
                 var text = m.Groups[1].Value.Trim();
-                if (!string.IsNullOrEmpty(text) && !info.Limitations.Contains(text))
-                {
-                    info.Limitations.Add(text);
-                }
+                if (!string.IsNullOrEmpty(text))
+                    rawLimitations.Add(text);
             }
         }
 
+        // Deduplicate menu items: normalize by removing brackets/parens/prefixes
+        info.MenuItems = DeduplicateMenuItems(rawMenuItems);
+
+        // Deduplicate limitations: group similar items, translate common English patterns to Japanese
+        info.Limitations = DeduplicateLimitations(rawLimitations);
+
         return info;
+    }
+
+    /// <summary>
+    /// Aggressively deduplicate menu items that represent the same function.
+    /// e.g. "検索 [部材・部品]", "検索 (部材・部品)", "検索 (search(部材・部品))" → keep first only
+    /// </summary>
+    private static List<string> DeduplicateMenuItems(List<string> items)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+
+        foreach (var item in items)
+        {
+            // Normalize: remove all brackets/parens, lowercase, remove spaces
+            var normalized = Regex.Replace(item, @"[\[\]\(\)（）\s　\""\']", "").ToLowerInvariant();
+            // Also strip common prefixes like "search" that may be function names
+            var normalized2 = Regex.Replace(normalized, @"^search", "");
+
+            if (seen.Contains(normalized) || seen.Contains(normalized2))
+                continue;
+
+            seen.Add(normalized);
+            if (!string.IsNullOrEmpty(normalized2))
+                seen.Add(normalized2);
+
+            // Skip items that look like internal function names (e.g. "search(部材・部品) - 検索")
+            if (Regex.IsMatch(item, @"^\w+\(.+\)\s*-\s*"))
+                continue;
+
+            result.Add(item);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Deduplicate and translate TODO/limitation items to Japanese.
+    /// </summary>
+    private static List<string> DeduplicateLimitations(List<string> items)
+    {
+        // Common English→Japanese translations for TODO comments
+        var translations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "implement search logic", "検索機能の実装が必要です" },
+            { "implement search functionality", "検索機能の実装が必要です" },
+            { "implement the search functionality", "検索機能の実装が必要です" },
+            { "implement go back logic", "「戻る」機能の実装が必要です" },
+            { "implement go back functionality", "「戻る」機能の実装が必要です" },
+            { "implement the go back functionality", "「戻る」機能の実装が必要です" },
+            { "implement back navigation", "「戻る」機能の実装が必要です" },
+            { "implement csv download logic", "CSVダウンロード機能の実装が必要です" },
+            { "implement csv download functionality", "CSVダウンロード機能の実装が必要です" },
+            { "implement the csv download functionality", "CSVダウンロード機能の実装が必要です" },
+            { "implement hsearch function", "検索機能の実装が必要です" },
+            { "implement goback function", "「戻る」機能の実装が必要です" },
+            { "implement csvdownload function", "CSVダウンロード機能の実装が必要です" },
+        };
+
+        // Regex-based translations for patterns
+        var patternTranslations = new (Regex Pattern, string Japanese)[]
+        {
+            (new Regex(@"is not (available|supported) in (Google Apps Script|GAS)", RegexOptions.IgnoreCase),
+                "はGoogle Apps Scriptでは利用できません"),
+            (new Regex(@"No GAS equivalent", RegexOptions.IgnoreCase),
+                "Google Apps Scriptに対応する機能がありません"),
+            (new Regex(@"Implement actual (.+)", RegexOptions.IgnoreCase),
+                "の実装が必要です"),
+            (new Regex(@"Replace with actual (.+)", RegexOptions.IgnoreCase),
+                "の実装が必要です"),
+            (new Regex(@"Update this (.+)", RegexOptions.IgnoreCase),
+                "の更新が必要です"),
+            (new Regex(@"Verify that (.+)", RegexOptions.IgnoreCase),
+                "の確認が必要です"),
+            (new Regex(@"Consider alternative", RegexOptions.IgnoreCase),
+                "代替手段の検討が必要です"),
+        };
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+
+        foreach (var item in items)
+        {
+            var translated = item;
+
+            // Try exact translation first
+            if (translations.TryGetValue(item.TrimEnd('.'), out var exact))
+            {
+                translated = exact;
+            }
+            else
+            {
+                // Try pattern-based translation
+                foreach (var (pattern, japanese) in patternTranslations)
+                {
+                    if (pattern.IsMatch(item))
+                    {
+                        // Extract the subject (e.g. "Worksheet_FollowHyperlink")
+                        var subject = Regex.Replace(item, @"\s*(is not available|is not supported|is unsupported).*$", "", RegexOptions.IgnoreCase).Trim();
+                        subject = Regex.Replace(subject, @"^(Implement actual|Replace with actual|Consider alternative:?\s*)", "", RegexOptions.IgnoreCase).Trim();
+
+                        if (!string.IsNullOrEmpty(subject) && subject != item)
+                            translated = $"{subject} {japanese}";
+                        else
+                            translated = japanese;
+                        break;
+                    }
+                }
+            }
+
+            // Normalize for dedup: lowercase, remove punctuation
+            var normalized = Regex.Replace(translated.ToLowerInvariant(), @"[。、．\.\s]", "");
+
+            if (seen.Contains(normalized))
+                continue;
+
+            seen.Add(normalized);
+            result.Add(translated);
+        }
+
+        // Cap at 10 items to avoid overwhelming non-technical users
+        if (result.Count > 10)
+        {
+            var truncated = result.Take(10).ToList();
+            truncated.Add($"（他 {result.Count - 10} 件）");
+            return truncated;
+        }
+
+        return result;
     }
 
     public async Task<DeployReport> Deploy(DeployRequest request, string googleToken)
