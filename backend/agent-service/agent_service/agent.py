@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 
 from claude_agent_sdk import (
     tool,
@@ -209,12 +210,19 @@ async def convert_single_module(request: ConvertRequest) -> ConvertResult:
     model = MODEL_SMALL if total_lines <= SMALL_MODULE_THRESHOLD else MODEL_LARGE
 
     try:
+        # Explicitly pass ANTHROPIC_API_KEY so Claude CLI uses it for auth
+        env = {}
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=SYSTEM_PROMPT,
             max_turns=MAX_AGENT_TURNS,
             mcp_servers={"convert-tools": mcp_server},
             permission_mode="bypassPermissions",
+            env=env,
         )
 
         gas_code = ""
@@ -335,12 +343,18 @@ Rules for merging:
     )
 
     try:
+        env = {}
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+
         options = ClaudeAgentOptions(
             model=MODEL_LARGE,
             system_prompt="You are an expert at merging Google Apps Script modules. Merge duplicate trigger functions across modules while preserving all functionality.",
             max_turns=MAX_AGENT_TURNS,
             mcp_servers={"merge-tools": merge_server},
             permission_mode="bypassPermissions",
+            env=env,
         )
 
         merged_modules = {}
