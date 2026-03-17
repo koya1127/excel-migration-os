@@ -26,6 +26,9 @@ public class MigrateController : ControllerBase
     private readonly ConvertService _convertService;
     private readonly UploadService _uploadService;
     private readonly DeployService _deployService;
+    private readonly TrackRouterService _trackRouterService;
+    private readonly PythonConvertService _pythonConvertService;
+    private readonly PythonPackagerService _pythonPackagerService;
     private readonly StripeUsageService _stripeUsageService;
     private readonly ClerkService _clerkService;
     private readonly ILogger<MigrateController> _logger;
@@ -35,6 +38,9 @@ public class MigrateController : ControllerBase
         ConvertService convertService,
         UploadService uploadService,
         DeployService deployService,
+        TrackRouterService trackRouterService,
+        PythonConvertService pythonConvertService,
+        PythonPackagerService pythonPackagerService,
         StripeUsageService stripeUsageService,
         ClerkService clerkService,
         ILogger<MigrateController> logger)
@@ -43,6 +49,9 @@ public class MigrateController : ControllerBase
         _convertService = convertService;
         _uploadService = uploadService;
         _deployService = deployService;
+        _trackRouterService = trackRouterService;
+        _pythonConvertService = pythonConvertService;
+        _pythonPackagerService = pythonPackagerService;
         _stripeUsageService = stripeUsageService;
         _clerkService = clerkService;
         _logger = logger;
@@ -57,7 +66,8 @@ public class MigrateController : ControllerBase
     public async Task<ActionResult<MigrateReport>> Migrate(
         [FromForm] List<IFormFile> files,
         [FromForm] bool convertToSheets = true,
-        [FromForm] string? folderId = null)
+        [FromForm] string? folderId = null,
+        [FromForm] string trackMode = "auto")
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         var googleToken = !string.IsNullOrEmpty(userId) ? await _clerkService.GetGoogleToken(userId) : null;
@@ -185,11 +195,84 @@ public class MigrateController : ControllerBase
                 return BadRequest(new { error = $"1回のリクエストで変換できるモジュール数は最大{MaxModulesPerRequest}です（検出: {convertRequests.Count}）" });
             }
 
-            var convertReport = await _convertService.ConvertBatch(convertRequests);
+            // Step 3a: Track routing — determine which modules go to GAS vs Python
+            var validModules = extractReport.Modules
+                .Where(m => !string.IsNullOrWhiteSpace(m.Code) && m.CodeLines > 1)
+                .ToList();
+            var trackResult = _trackRouterService.Route(validModules);
+            migrateReport.TrackRouting = trackResult;
+
+            // Determine which tracks to execute based on trackMode
+            var runGas = trackMode is "auto" or "sheets_only" or "both";
+            var runPython = trackMode is "auto" or "local_only" or "both";
+
+            // For "auto": only run each track if there are modules for it
+            if (trackMode == "auto")
+            {
+                runGas = trackResult.Track1Modules.Count > 0;
+                runPython = trackResult.Track2Modules.Count > 0;
+            }
+
+            // Filter convertRequests to Track 1 modules only (for GAS)
+            var track1Names = new HashSet<string>(trackResult.Track1Modules.Select(m => m.ModuleName));
+            var gasConvertRequests = trackMode == "local_only"
+                ? new List<ConvertRequest>()
+                : trackMode == "sheets_only" || trackMode == "both"
+                    ? convertRequests // all modules go to GAS
+                    : convertRequests.Where(r => track1Names.Contains(r.ModuleName)).ToList(); // auto: only Track 1
+
+            // GAS conversion
+            ConvertReport convertReport;
+            if (gasConvertRequests.Count > 0 && runGas)
+            {
+                convertReport = await _convertService.ConvertBatch(gasConvertRequests);
+            }
+            else
+            {
+                convertReport = new ConvertReport { GeneratedUtc = DateTime.UtcNow.ToString("o") };
+            }
             migrateReport.Convert = convertReport;
 
-            // Report usage — block response if billing fails
-            var totalTokens = convertReport.TotalInputTokens + convertReport.TotalOutputTokens;
+            // Python conversion (Track 2)
+            PythonConvertReport? pythonReport = null;
+            if (runPython && trackResult.Track2Modules.Count > 0)
+            {
+                var spreadsheetId = uploadReport.Files
+                    .FirstOrDefault(f => f.Status == "success")?.DriveFileId;
+
+                var pythonRequests = trackResult.Track2Modules.Select(m => new PythonConvertRequest
+                {
+                    VbaCode = m.Code,
+                    ModuleName = m.ModuleName,
+                    ModuleType = m.ModuleType,
+                    SourceFile = m.SourceFile,
+                    SheetName = m.SheetName,
+                    SpreadsheetId = spreadsheetId
+                }).ToList();
+
+                pythonReport = await _pythonConvertService.ConvertBatch(pythonRequests);
+                migrateReport.PythonConvert = pythonReport;
+
+                // Package Python files into ZIP
+                if (pythonReport.Success > 0)
+                {
+                    var sourceFileName = files.FirstOrDefault()?.FileName ?? "output";
+                    var package = _pythonPackagerService.Package(sourceFileName, pythonReport.Results, spreadsheetId);
+
+                    // Save ZIP to temp and create download URL
+                    var zipPath = Path.Combine(tempDir, package.FileName);
+                    await System.IO.File.WriteAllBytesAsync(zipPath, package.ZipData);
+
+                    // Store ZIP in memory cache for download endpoint
+                    var zipId = Guid.NewGuid().ToString("N");
+                    PythonZipCache.Store(zipId, package);
+                    migrateReport.PythonPackageUrl = $"/api/migrate/download/{zipId}";
+                }
+            }
+
+            // Report usage — block response if billing fails (include both GAS + Python tokens)
+            var totalTokens = convertReport.TotalInputTokens + convertReport.TotalOutputTokens
+                + (pythonReport?.TotalInputTokens ?? 0) + (pythonReport?.TotalOutputTokens ?? 0);
             if (totalTokens > 0)
             {
                 if (HttpContext.Items.TryGetValue("ClerkUserMeta", out var metaObj)
@@ -276,6 +359,20 @@ public class MigrateController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Download endpoint for Python ZIP packages
+    /// </summary>
+    [HttpGet("download/{zipId}")]
+    [AllowAnonymous] // ZIP download doesn't need auth (short-lived URL)
+    public ActionResult DownloadPythonPackage(string zipId)
+    {
+        var package = PythonZipCache.Get(zipId);
+        if (package == null)
+            return NotFound(new { error = "ダウンロードリンクの有効期限が切れました" });
+
+        return File(package.ZipData, "application/zip", package.FileName);
+    }
+
     private static string BuildIdempotencyKey(string prefix, List<ConvertRequest> requests, int totalTokens = 0)
     {
         using var sha = SHA256.Create();
@@ -290,5 +387,39 @@ public class MigrateController : ControllerBase
         sb.Append(':').Append(DateTimeOffset.UtcNow.ToString("yyyyMMddHH"));
         var hash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
         return $"{prefix}-{hash}";
+    }
+}
+
+/// <summary>
+/// Simple in-memory cache for Python ZIP packages (auto-expires after 30 minutes)
+/// </summary>
+public static class PythonZipCache
+{
+    private static readonly Dictionary<string, (PythonPackage Package, DateTime ExpiresAt)> _cache = new();
+    private static readonly object _lock = new();
+
+    public static void Store(string id, PythonPackage package)
+    {
+        lock (_lock)
+        {
+            // Clean expired entries
+            var expired = _cache.Where(kv => kv.Value.ExpiresAt < DateTime.UtcNow).Select(kv => kv.Key).ToList();
+            foreach (var key in expired) _cache.Remove(key);
+
+            _cache[id] = (package, DateTime.UtcNow.AddMinutes(30));
+        }
+    }
+
+    public static PythonPackage? Get(string id)
+    {
+        lock (_lock)
+        {
+            if (_cache.TryGetValue(id, out var entry) && entry.ExpiresAt > DateTime.UtcNow)
+            {
+                _cache.Remove(id); // One-time download
+                return entry.Package;
+            }
+            return null;
+        }
     }
 }

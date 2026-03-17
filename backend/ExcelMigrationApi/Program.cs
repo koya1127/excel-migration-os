@@ -189,6 +189,9 @@ builder.Services.AddSingleton<UploadService>();
 builder.Services.AddSingleton<DeployService>();
 builder.Services.AddSingleton<ClerkService>();
 builder.Services.AddSingleton<StripeUsageService>();
+builder.Services.AddSingleton<TrackRouterService>();
+builder.Services.AddSingleton<PythonConvertService>();
+builder.Services.AddSingleton<PythonPackagerService>();
 
 builder.Services.AddOpenApi();
 

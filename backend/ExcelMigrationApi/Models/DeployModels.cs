@@ -62,6 +62,7 @@ public class MigrateRequest
 {
     public bool ConvertToSheets { get; set; } = true;
     public string? FolderId { get; set; }
+    public string TrackMode { get; set; } = "auto"; // "auto", "sheets_only", "local_only", "both"
 }
 
 public class MigrateReport
@@ -69,6 +70,9 @@ public class MigrateReport
     public string GeneratedUtc { get; set; } = string.Empty;
     public UploadReport? Upload { get; set; }
     public ExtractReport? Extract { get; set; }
+    public TrackResult? TrackRouting { get; set; }
     public ConvertReport? Convert { get; set; }
+    public PythonConvertReport? PythonConvert { get; set; }
     public List<DeployReport> Deploys { get; set; } = new();
+    public string? PythonPackageUrl { get; set; }
 }
