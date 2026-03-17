@@ -310,35 +310,64 @@ export default function MigratePage() {
         },
       }));
 
-      // Update convert step
+      // Update convert step (handle local_only mode where GAS convert is skipped)
       const convert = report.convert;
+      const isLocalOnly = trackMode === "local_only";
+      const pythonConvert = report.pythonConvert;
       if (convert) {
-        setSteps((prev) => ({
-          ...prev,
-          convert: {
-            status: convert.failed > 0 ? "error" : "success",
-            detail: `${convert.success}/${convert.total} 成功（${(convert.totalInputTokens + convert.totalOutputTokens).toLocaleString()} トークン）`,
-            data: convert,
-          },
-        }));
+        if (isLocalOnly && convert.total === 0) {
+          // local_only: GAS変換はスキップ、Python変換の結果を表示
+          const pyTokens = (pythonConvert?.totalInputTokens || 0) + (pythonConvert?.totalOutputTokens || 0);
+          setSteps((prev) => ({
+            ...prev,
+            convert: {
+              status: pythonConvert && pythonConvert.failed > 0 ? "error" : "success",
+              detail: pythonConvert
+                ? `Python ${pythonConvert.success}/${pythonConvert.total} 成功（${pyTokens.toLocaleString()} トークン）`
+                : "スキップ（ローカルのみモード）",
+              data: convert,
+            },
+          }));
+        } else {
+          setSteps((prev) => ({
+            ...prev,
+            convert: {
+              status: convert.failed > 0 ? "error" : "success",
+              detail: `${convert.success}/${convert.total} 成功（${(convert.totalInputTokens + convert.totalOutputTokens).toLocaleString()} トークン）`,
+              data: convert,
+            },
+          }));
+        }
       }
 
-      // Update deploy step
+      // Update deploy step (handle local_only mode where deploy is skipped)
       const deploys = report.deploys || [];
       const deploySuccess = deploys.filter((d) => d.status === "success").length;
       const deployTotal = deploys.length;
       const hasDeployError = deploys.some((d) => d.status !== "success");
 
-      setSteps((prev) => ({
-        ...prev,
-        deploy: {
-          status: deployTotal === 0 ? "error" : hasDeployError ? "error" : "success",
-          detail: deployTotal === 0
-            ? "デプロイ可能なファイルがありません"
-            : `${deploySuccess} スプレッドシートにデプロイ完了`,
-          deploys,
-        },
-      }));
+      if (isLocalOnly) {
+        // local_only: デプロイはスキップ（正常）
+        setSteps((prev) => ({
+          ...prev,
+          deploy: {
+            status: "success",
+            detail: report.pythonPackageUrl ? "ローカル版（Python）を生成しました" : "スキップ（ローカルのみモード）",
+            deploys: [],
+          },
+        }));
+      } else {
+        setSteps((prev) => ({
+          ...prev,
+          deploy: {
+            status: deployTotal === 0 ? "error" : hasDeployError ? "error" : "success",
+            detail: deployTotal === 0
+              ? "デプロイ可能なファイルがありません"
+              : `${deploySuccess} スプレッドシートにデプロイ完了`,
+            deploys,
+          },
+        }));
+      }
 
       setExpandedSteps(new Set([1, 2, 3, 4]));
 

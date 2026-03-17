@@ -127,7 +127,7 @@ def get_spreadsheet():
             var requestBody = new
             {
                 model,
-                max_tokens = 8192,
+                max_tokens = 16384,
                 system = SystemPrompt,
                 messages = new[]
                 {
@@ -174,6 +174,13 @@ def get_spreadsheet():
 
             // Strip markdown code fences if present
             pythonCode = StripCodeFences(pythonCode);
+
+            // Check for truncated output (unclosed brackets/strings)
+            if (IsTruncated(pythonCode))
+            {
+                _logger.LogWarning("Python code for {Module} appears truncated, attempting to fix", request.ModuleName);
+                pythonCode = FixTruncatedCode(pythonCode);
+            }
 
             return new PythonConvertResult
             {
@@ -243,6 +250,106 @@ def get_spreadsheet():
             code = code[..^3];
 
         return code.Trim();
+    }
+
+    private static bool IsTruncated(string code)
+    {
+        if (string.IsNullOrEmpty(code)) return false;
+
+        // Check for unclosed brackets/parens/braces
+        int parens = 0, brackets = 0, braces = 0;
+        bool inString = false;
+        char stringChar = '\0';
+
+        foreach (var c in code)
+        {
+            if (inString)
+            {
+                if (c == stringChar) inString = false;
+                continue;
+            }
+            switch (c)
+            {
+                case '"' or '\'':
+                    inString = true;
+                    stringChar = c;
+                    break;
+                case '(': parens++; break;
+                case ')': parens--; break;
+                case '[': brackets++; break;
+                case ']': brackets--; break;
+                case '{': braces++; break;
+                case '}': braces--; break;
+            }
+        }
+
+        return parens > 0 || brackets > 0 || braces > 0 || inString;
+    }
+
+    private static string FixTruncatedCode(string code)
+    {
+        // Find the last complete function definition and cut there
+        var lines = code.Split('\n');
+        var lastGoodLine = lines.Length - 1;
+
+        // Walk backwards to find last line that starts a complete function or is at indent level 0
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            var line = lines[i];
+            if (line.StartsWith("def ") || (line.Length > 0 && !char.IsWhiteSpace(line[0]) && !line.TrimStart().StartsWith("#")))
+            {
+                // Check if this function is complete (has a return or pass before next def)
+                var hasBody = false;
+                for (var j = i + 1; j < lines.Length; j++)
+                {
+                    if (lines[j].StartsWith("def ") || (lines[j].Length > 0 && !char.IsWhiteSpace(lines[j][0])))
+                        break;
+                    if (lines[j].Trim().Length > 0)
+                        hasBody = true;
+                }
+                if (hasBody)
+                {
+                    lastGoodLine = i - 1;
+                    // Find next def or end after this one that's complete
+                    for (var j = i + 1; j < lines.Length; j++)
+                    {
+                        if (lines[j].StartsWith("def "))
+                        {
+                            lastGoodLine = j - 1;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        // If we can't fix it well, just close any open constructs
+        var result = string.Join('\n', lines.Take(lastGoodLine + 1));
+
+        // Count remaining open parens/brackets/braces and close them
+        int parens = 0, brackets = 0, braces = 0;
+        foreach (var c in result)
+        {
+            switch (c)
+            {
+                case '(': parens++; break;
+                case ')': parens--; break;
+                case '[': brackets++; break;
+                case ']': brackets--; break;
+                case '{': braces++; break;
+                case '}': braces--; break;
+            }
+        }
+
+        var suffix = new string(')', Math.Max(0, parens))
+            + new string(']', Math.Max(0, brackets))
+            + new string('}', Math.Max(0, braces));
+
+        if (!string.IsNullOrEmpty(suffix))
+            result += "\n" + suffix + "\n    pass  # TODO: このコードはAI変換時に途中で切れました。手動で補完してください\n";
+
+        return result;
     }
 
     // Reuse the same Claude API response models from ConvertService
