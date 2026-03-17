@@ -185,13 +185,61 @@ export interface DeployReport {
   error: string;
 }
 
+// Track routing types
+export interface TrackDecision {
+  moduleName: string;
+  sourceFile: string;
+  track: number; // 1 = GAS, 2 = Python
+  reason: string;
+  detectedPatterns: string[];
+}
+
+export interface TrackResult {
+  track1Modules: VbaModule[];
+  track2Modules: VbaModule[];
+  decisions: TrackDecision[];
+}
+
+export interface VbaModule {
+  sourcefile: string;
+  moduleName: string;
+  moduleType: string;
+  codeLines: number;
+  code: string;
+}
+
+export interface PythonConvertResult {
+  moduleName: string;
+  pythonCode: string;
+  status: string;
+  error: string;
+  sourceFile: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface PythonConvertReport {
+  generatedUtc: string;
+  total: number;
+  success: number;
+  failed: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  results: PythonConvertResult[];
+}
+
 // Migrate types
+export type TrackMode = "auto" | "sheets_only" | "local_only" | "both";
+
 export interface MigrateReport {
   generatedUtc: string;
   upload?: UploadReport;
   extract: ExtractReport;
+  trackRouting?: TrackResult;
   convert: ConvertReport;
+  pythonConvert?: PythonConvertReport;
   deploys: DeployReport[];
+  pythonPackageUrl?: string;
 }
 
 // API functions
@@ -276,12 +324,13 @@ export async function deployGas(spreadsheetId: string, gasFiles: GasFile[]): Pro
   return res.json();
 }
 
-export async function migrateFiles(files: File[], convertToSheets: boolean = true, folderId?: string): Promise<MigrateReport> {
+export async function migrateFiles(files: File[], convertToSheets: boolean = true, folderId?: string, trackMode: TrackMode = "auto"): Promise<MigrateReport> {
   const authHeaders = await getAuthHeaders();
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
   formData.append("convertToSheets", String(convertToSheets));
   if (folderId) formData.append("folderId", folderId);
+  formData.append("trackMode", trackMode);
   const res = await fetch(`${requireApiBase()}/api/migrate`, { method: "POST", headers: { ...authHeaders }, body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => null);

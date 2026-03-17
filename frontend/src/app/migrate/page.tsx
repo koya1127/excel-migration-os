@@ -9,6 +9,8 @@ import {
   type ExtractReport,
   type ConvertReport,
   type DeployReport,
+  type TrackMode,
+  type PythonConvertReport,
 } from "@/lib/api";
 
 function Spinner() {
@@ -168,6 +170,8 @@ const initialSteps: StepState = {
 export default function MigratePage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [folderId, setFolderId] = useState("");
+  const [trackMode, setTrackMode] = useState<TrackMode>("auto");
+  const [pythonDownloadUrl, setPythonDownloadUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<StepState>(initialSteps);
@@ -276,7 +280,13 @@ export default function MigratePage() {
       });
 
       // Call backend migrate API (does upload → extract → convert → deploy in one request)
-      const report: MigrateReport = await migrateFiles(selectedFiles, true, folderId || undefined);
+      const report: MigrateReport = await migrateFiles(selectedFiles, true, folderId || undefined, trackMode);
+
+      // Store Python download URL if available
+      if (report.pythonPackageUrl) {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+        setPythonDownloadUrl(`${apiBase}${report.pythonPackageUrl}`);
+      }
 
       // Update upload step
       const upload = report.upload;
@@ -415,6 +425,27 @@ export default function MigratePage() {
           <input type="text" value={folderId} onChange={(e) => setFolderId(e.target.value)} className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="空欄の場合はマイドライブのルートに作成" />
         </div>
 
+        {/* Track Mode */}
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">移行モード</label>
+          <div className="flex flex-wrap gap-3">
+            {([
+              { value: "auto", label: "自動判定", desc: "マクロの内容に応じて自動で振り分け" },
+              { value: "sheets_only", label: "スプシのみ", desc: "すべてGASに変換" },
+              { value: "local_only", label: "ローカルのみ", desc: "すべてPythonに変換" },
+              { value: "both", label: "両方出力", desc: "GAS + Python両方を生成" },
+            ] as { value: TrackMode; label: string; desc: string }[]).map(({ value, label, desc }) => (
+              <label key={value} className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${trackMode === value ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}>
+                <input type="radio" name="trackMode" value={value} checked={trackMode === value} onChange={() => setTrackMode(value)} className="mt-0.5" />
+                <div>
+                  <span className="text-sm font-medium text-gray-900">{label}</span>
+                  <p className="text-xs text-gray-500">{desc}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-6 flex items-center gap-4">
           <button onClick={handleMigrate} disabled={selectedFiles.length === 0 || loading} className="rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
             {loading ? <span className="flex items-center gap-2"><Spinner />移行中...</span> : "移行開始"}
@@ -505,6 +536,15 @@ export default function MigratePage() {
                   移行先スプレッドシートを開く
                 </a>
               ))}
+              {pythonDownloadUrl && (
+                <div className="mt-3">
+                  <a href={pythonDownloadUrl} download className="inline-flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" /></svg>
+                    ローカル版をダウンロード（Python）
+                  </a>
+                  <p className="mt-1 text-xs text-gray-500">スプレッドシートでは動かせなかった機能が含まれています</p>
+                </div>
+              )}
             </div>
           )}
         </div>
