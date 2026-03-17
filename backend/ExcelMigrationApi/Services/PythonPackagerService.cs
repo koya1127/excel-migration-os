@@ -110,6 +110,7 @@ public class PythonPackagerService
         sb.AppendLine();
         sb.AppendLine("import sys");
         sb.AppendLine("import os");
+        sb.AppendLine("import json");
         sb.AppendLine();
 
         // Import modules
@@ -121,6 +122,29 @@ public class PythonPackagerService
 
         sb.AppendLine();
         sb.AppendLine();
+
+        // Extract callable functions from each module's Python code
+        var menuItems = new List<(string ModuleName, string FuncName, string DisplayName)>();
+        var funcRegex = new System.Text.RegularExpressions.Regex(
+            @"^def\s+(\w+)\s*\(", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        foreach (var result in results)
+        {
+            if (string.IsNullOrEmpty(result.PythonCode)) continue;
+            var moduleSafe = MakeSafeName(result.ModuleName).ToLowerInvariant();
+
+            foreach (System.Text.RegularExpressions.Match m in funcRegex.Matches(result.PythonCode))
+            {
+                var funcName = m.Groups[1].Value;
+                // Skip private/internal functions and get_spreadsheet helper
+                if (funcName.StartsWith("_") || funcName == "get_spreadsheet" || funcName == "get_path")
+                    continue;
+                // Use function name as display, replacing underscores with spaces
+                var display = funcName.Replace("_", " ");
+                menuItems.Add((moduleSafe, funcName, display));
+            }
+        }
+
         sb.AppendLine("def main():");
         sb.AppendLine("    print(\"=\" * 50)");
         sb.AppendLine($"    print(\"  {baseName} ローカル版\")");
@@ -129,9 +153,20 @@ public class PythonPackagerService
         sb.AppendLine("    print(\"実行したい機能の番号を入力してください:\")");
         sb.AppendLine("    print()");
 
-        for (var i = 0; i < results.Count; i++)
+        if (menuItems.Count > 0)
         {
-            sb.AppendLine($"    print(\"  {i + 1}. {results[i].ModuleName}\")");
+            for (var i = 0; i < menuItems.Count; i++)
+            {
+                sb.AppendLine($"    print(\"  {i + 1}. {menuItems[i].DisplayName}\")");
+            }
+        }
+        else
+        {
+            // Fallback: list modules
+            for (var i = 0; i < results.Count; i++)
+            {
+                sb.AppendLine($"    print(\"  {i + 1}. {results[i].ModuleName}\")");
+            }
         }
         sb.AppendLine("    print(\"  0. 終了\")");
         sb.AppendLine("    print()");
@@ -143,16 +178,32 @@ public class PythonPackagerService
         sb.AppendLine("            print(\"終了します。\")");
         sb.AppendLine("            break");
 
-        for (var i = 0; i < results.Count; i++)
+        if (menuItems.Count > 0)
         {
-            var moduleName = MakeSafeName(results[i].ModuleName).ToLowerInvariant();
-            sb.AppendLine($"        elif choice == \"{i + 1}\":");
-            sb.AppendLine($"            try:");
-            sb.AppendLine($"                print(\"実行中: {results[i].ModuleName}...\")");
-            sb.AppendLine($"                # {moduleName} モジュールの関数を呼び出してください");
-            sb.AppendLine($"                print(\"※ modules/{moduleName}.py の関数を確認して呼び出しを追加してください\")");
-            sb.AppendLine($"            except Exception as e:");
-            sb.AppendLine($"                print(f\"エラーが発生しました: {{e}}\")");
+            for (var i = 0; i < menuItems.Count; i++)
+            {
+                var (modName, funcName, displayName) = menuItems[i];
+                // Check if function takes no args or has defaults
+                sb.AppendLine($"        elif choice == \"{i + 1}\":");
+                sb.AppendLine($"            try:");
+                sb.AppendLine($"                print(\"実行中: {displayName}...\")");
+                sb.AppendLine($"                {modName}.{funcName}()");
+                sb.AppendLine($"            except Exception as e:");
+                sb.AppendLine($"                print(f\"エラーが発生しました: {{e}}\")");
+            }
+        }
+        else
+        {
+            for (var i = 0; i < results.Count; i++)
+            {
+                var moduleName = MakeSafeName(results[i].ModuleName).ToLowerInvariant();
+                sb.AppendLine($"        elif choice == \"{i + 1}\":");
+                sb.AppendLine($"            try:");
+                sb.AppendLine($"                print(\"実行中: {results[i].ModuleName}...\")");
+                sb.AppendLine($"                print(\"※ modules/{moduleName}.py の関数を確認してください\")");
+                sb.AppendLine($"            except Exception as e:");
+                sb.AppendLine($"                print(f\"エラーが発生しました: {{e}}\")");
+            }
         }
 
         sb.AppendLine("        else:");
