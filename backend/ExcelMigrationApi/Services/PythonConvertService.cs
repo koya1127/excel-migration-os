@@ -252,102 +252,56 @@ def get_spreadsheet():
         return code.Trim();
     }
 
+    /// <summary>
+    /// Check if Python code was truncated (incomplete last function).
+    /// Simple heuristic: last non-empty line is inside a function body (indented)
+    /// and doesn't look like a natural end.
+    /// </summary>
     private static bool IsTruncated(string code)
     {
         if (string.IsNullOrEmpty(code)) return false;
+        var lines = code.TrimEnd().Split('\n');
+        if (lines.Length == 0) return false;
 
-        // Check for unclosed brackets/parens/braces
-        int parens = 0, brackets = 0, braces = 0;
-        bool inString = false;
-        char stringChar = '\0';
-
-        foreach (var c in code)
+        var lastLine = lines[^1].TrimEnd();
+        // If last line is indented and doesn't end with a complete statement, likely truncated
+        if (lastLine.Length > 0 && char.IsWhiteSpace(lastLine[0]))
         {
-            if (inString)
-            {
-                if (c == stringChar) inString = false;
-                continue;
-            }
-            switch (c)
-            {
-                case '"' or '\'':
-                    inString = true;
-                    stringChar = c;
-                    break;
-                case '(': parens++; break;
-                case ')': parens--; break;
-                case '[': brackets++; break;
-                case ']': brackets--; break;
-                case '{': braces++; break;
-                case '}': braces--; break;
-            }
+            // Truncated if ends mid-string, mid-dict, mid-call
+            if (lastLine.EndsWith(",") || lastLine.EndsWith("(") || lastLine.EndsWith("{") || lastLine.EndsWith("["))
+                return true;
         }
+        // Check for unclosed triple-quoted strings
+        var tripleDouble = System.Text.RegularExpressions.Regex.Matches(code, "\"\"\"").Count;
+        var tripleSingle = System.Text.RegularExpressions.Regex.Matches(code, "'''").Count;
+        if (tripleDouble % 2 != 0 || tripleSingle % 2 != 0)
+            return true;
 
-        return parens > 0 || brackets > 0 || braces > 0 || inString;
+        return false;
     }
 
+    /// <summary>
+    /// Fix truncated Python code by cutting at the last complete top-level function.
+    /// </summary>
     private static string FixTruncatedCode(string code)
     {
-        // Find the last complete function definition and cut there
         var lines = code.Split('\n');
-        var lastGoodLine = lines.Length - 1;
 
-        // Walk backwards to find last line that starts a complete function or is at indent level 0
-        for (var i = lines.Length - 1; i >= 0; i--)
+        // Find all top-level function start positions
+        var funcStarts = new List<int>();
+        for (var i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
-            if (line.StartsWith("def ") || (line.Length > 0 && !char.IsWhiteSpace(line[0]) && !line.TrimStart().StartsWith("#")))
-            {
-                // Check if this function is complete (has a return or pass before next def)
-                var hasBody = false;
-                for (var j = i + 1; j < lines.Length; j++)
-                {
-                    if (lines[j].StartsWith("def ") || (lines[j].Length > 0 && !char.IsWhiteSpace(lines[j][0])))
-                        break;
-                    if (lines[j].Trim().Length > 0)
-                        hasBody = true;
-                }
-                if (hasBody)
-                {
-                    lastGoodLine = i - 1;
-                    // Find next def or end after this one that's complete
-                    for (var j = i + 1; j < lines.Length; j++)
-                    {
-                        if (lines[j].StartsWith("def "))
-                        {
-                            lastGoodLine = j - 1;
-                            break;
-                        }
-                    }
-                }
-                break;
-            }
+            if (lines[i].StartsWith("def "))
+                funcStarts.Add(i);
         }
 
-        // If we can't fix it well, just close any open constructs
-        var result = string.Join('\n', lines.Take(lastGoodLine + 1));
+        if (funcStarts.Count < 2)
+            return code; // Can't fix if only one function
 
-        // Count remaining open parens/brackets/braces and close them
-        int parens = 0, brackets = 0, braces = 0;
-        foreach (var c in result)
-        {
-            switch (c)
-            {
-                case '(': parens++; break;
-                case ')': parens--; break;
-                case '[': brackets++; break;
-                case ']': brackets--; break;
-                case '{': braces++; break;
-                case '}': braces--; break;
-            }
-        }
-
-        var suffix = new string(')', Math.Max(0, parens))
-            + new string(']', Math.Max(0, brackets))
-            + new string('}', Math.Max(0, braces));
-
-        if (!string.IsNullOrEmpty(suffix))
-            result += "\n" + suffix + "\n    pass  # TODO: このコードはAI変換時に途中で切れました。手動で補完してください\n";
+        // Remove the last (incomplete) function — keep up to the start of the last function
+        var cutAt = funcStarts[^1];
+        var result = string.Join('\n', lines.Take(cutAt)).TrimEnd();
+        result += "\n\n# TODO: 最後の関数はAI変換時に途中で切れたため省略されました。元のVBAを確認してください。\n";
 
         return result;
     }
