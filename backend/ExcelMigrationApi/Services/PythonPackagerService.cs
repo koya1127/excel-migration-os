@@ -55,7 +55,6 @@ public class PythonPackagerService
                 writer.WriteLine("gspread>=5.0.0");
                 writer.WriteLine("google-auth>=2.0.0");
                 writer.WriteLine("openpyxl>=3.0.0");
-                writer.WriteLine("pywin32>=300");
             }
 
             // setup.bat
@@ -123,10 +122,13 @@ public class PythonPackagerService
         sb.AppendLine();
         sb.AppendLine();
 
-        // Extract callable functions from each module's Python code
-        var menuItems = new List<(string ModuleName, string FuncName, string DisplayName)>();
+        // Extract callable functions with full signatures and docstrings
+        var menuItems = new List<(string ModuleName, string FuncName, string DisplayName, List<FuncParam> Params)>();
         var funcRegex = new System.Text.RegularExpressions.Regex(
-            @"^def\s+(\w+)\s*\(", System.Text.RegularExpressions.RegexOptions.Multiline);
+            @"^def\s+(\w+)\s*\(([^)]*)\).*?:\s*\n(\s*""""""(.*?)"""""")?",
+            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var skipFuncs = new HashSet<string> { "get_spreadsheet", "get_path", "main" };
 
         foreach (var result in results)
         {
@@ -136,13 +138,56 @@ public class PythonPackagerService
             foreach (System.Text.RegularExpressions.Match m in funcRegex.Matches(result.PythonCode))
             {
                 var funcName = m.Groups[1].Value;
-                // Skip private/internal functions and get_spreadsheet helper
-                if (funcName.StartsWith("_") || funcName == "get_spreadsheet" || funcName == "get_path")
+                if (funcName.StartsWith("_") || skipFuncs.Contains(funcName))
                     continue;
-                // Use function name as display, replacing underscores with spaces
-                var display = funcName.Replace("_", " ");
-                menuItems.Add((moduleSafe, funcName, display));
+
+                // Parse parameters
+                var paramStr = m.Groups[2].Value.Trim();
+                var funcParams = ParseFuncParams(paramStr);
+
+                // Extract docstring for display name
+                var docstring = m.Groups[4].Success ? m.Groups[4].Value.Trim().Split('\n')[0].Trim() : "";
+                var display = !string.IsNullOrEmpty(docstring) ? docstring : funcName.Replace("_", " ");
+
+                menuItems.Add((moduleSafe, funcName, display, funcParams));
             }
+        }
+
+        // Check if any function needs workbook → add helper
+        var needsWorkbook = menuItems.Any(mi => mi.Params.Any(p => IsWorkbookParam(p)));
+        if (needsWorkbook)
+        {
+            sb.AppendLine("_workbook_cache = None");
+            sb.AppendLine();
+            sb.AppendLine("def get_workbook():");
+            sb.AppendLine("    global _workbook_cache");
+            sb.AppendLine("    if _workbook_cache is not None:");
+            sb.AppendLine("        return _workbook_cache");
+            sb.AppendLine("    # 各モジュールのget_spreadsheet()を探す");
+            sb.AppendLine("    for mod_name in dir():");
+            sb.AppendLine("        pass");
+            // Directly call the first module's get_spreadsheet
+            var firstModWithSpreadsheet = results.FirstOrDefault(r =>
+                !string.IsNullOrEmpty(r.PythonCode) && r.PythonCode.Contains("def get_spreadsheet("));
+            if (firstModWithSpreadsheet != null)
+            {
+                var modName = MakeSafeName(firstModWithSpreadsheet.ModuleName).ToLowerInvariant();
+                sb.AppendLine($"    _workbook_cache = {modName}.get_spreadsheet()");
+            }
+            else
+            {
+                sb.AppendLine("    import gspread");
+                sb.AppendLine("    from google.oauth2.service_account import Credentials");
+                sb.AppendLine("    with open('config.json', 'r') as f:");
+                sb.AppendLine("        config = json.load(f)");
+                sb.AppendLine("    scopes = ['https://www.googleapis.com/auth/spreadsheets']");
+                sb.AppendLine("    creds = Credentials.from_service_account_file(config['credentials_file'], scopes=scopes)");
+                sb.AppendLine("    gc = gspread.authorize(creds)");
+                sb.AppendLine("    _workbook_cache = gc.open_by_key(config['spreadsheet_id'])");
+            }
+            sb.AppendLine("    return _workbook_cache");
+            sb.AppendLine();
+            sb.AppendLine();
         }
 
         sb.AppendLine("def main():");
@@ -162,7 +207,6 @@ public class PythonPackagerService
         }
         else
         {
-            // Fallback: list modules
             for (var i = 0; i < results.Count; i++)
             {
                 sb.AppendLine($"    print(\"  {i + 1}. {results[i].ModuleName}\")");
@@ -182,12 +226,39 @@ public class PythonPackagerService
         {
             for (var i = 0; i < menuItems.Count; i++)
             {
-                var (modName, funcName, displayName) = menuItems[i];
-                // Check if function takes no args or has defaults
+                var (modName, funcName, displayName, funcParams) = menuItems[i];
                 sb.AppendLine($"        elif choice == \"{i + 1}\":");
                 sb.AppendLine($"            try:");
                 sb.AppendLine($"                print(\"実行中: {displayName}...\")");
-                sb.AppendLine($"                {modName}.{funcName}()");
+
+                // Build argument list
+                var args = new List<string>();
+                foreach (var p in funcParams)
+                {
+                    if (IsWorkbookParam(p))
+                    {
+                        args.Add("get_workbook()");
+                    }
+                    else if (p.TypeHint.Contains("Worksheet"))
+                    {
+                        // Worksheet params: prompt for sheet name and get from workbook
+                        sb.AppendLine($"                _sheet_name = input(\"{p.Name}のシート名を入力: \").strip()");
+                        args.Add("get_workbook().worksheet(_sheet_name)");
+                    }
+                    else if (p.TypeHint.Contains("int") || p.Name.Contains("row") || p.Name.Contains("col") || p.Name.Contains("pos"))
+                    {
+                        sb.AppendLine($"                _{p.Name} = int(input(\"{ParamToJapanese(p.Name)}を入力: \").strip())");
+                        args.Add($"_{p.Name}");
+                    }
+                    else
+                    {
+                        // Default: string input
+                        sb.AppendLine($"                _{p.Name} = input(\"{ParamToJapanese(p.Name)}を入力: \").strip()");
+                        args.Add($"_{p.Name}");
+                    }
+                }
+
+                sb.AppendLine($"                {modName}.{funcName}({string.Join(", ", args)})");
                 sb.AppendLine($"            except Exception as e:");
                 sb.AppendLine($"                print(f\"エラーが発生しました: {{e}}\")");
             }
@@ -215,6 +286,60 @@ public class PythonPackagerService
         sb.AppendLine("    main()");
 
         return sb.ToString();
+    }
+
+    private record FuncParam(string Name, string TypeHint);
+
+    private static List<FuncParam> ParseFuncParams(string paramStr)
+    {
+        var result = new List<FuncParam>();
+        if (string.IsNullOrWhiteSpace(paramStr)) return result;
+
+        foreach (var raw in paramStr.Split(','))
+        {
+            var param = raw.Trim();
+            if (string.IsNullOrEmpty(param) || param == "self") continue;
+
+            // Handle default values: skip params with defaults (they're optional)
+            if (param.Contains('=')) continue;
+
+            // Parse "name: type" or just "name"
+            var parts = param.Split(':');
+            var name = parts[0].Trim();
+            var typeHint = parts.Length > 1 ? parts[1].Trim() : "";
+            result.Add(new FuncParam(name, typeHint));
+        }
+        return result;
+    }
+
+    private static bool IsWorkbookParam(FuncParam p)
+    {
+        return p.Name == "workbook" ||
+               p.TypeHint.Contains("Spreadsheet") ||
+               (p.Name == "wb" && p.TypeHint.Contains("gspread"));
+    }
+
+    private static string ParamToJapanese(string paramName)
+    {
+        return paramName switch
+        {
+            "caller" => "呼び出し元 (例: search, buzaibuhin, hinmei)",
+            "code" => "検索コード",
+            "sheet_name" => "シート名",
+            "csv_file" => "CSVファイル名",
+            "key_type" => "種別 (buzai/buhin)",
+            "search_code" => "検索コード",
+            "str_key" => "検索キー",
+            "str_ext" => "拡張子",
+            "index_path" => "インデックスパス",
+            "index_sheet_name" => "インデックスシート名",
+            "sub_addr" => "サブアドレス",
+            "infile" => "ファイル名",
+            "conv_type" => "変換タイプ (0: エスケープ, 1: 復元)",
+            "stat" => "ステータス",
+            "save_dest" => "保存先パス",
+            _ => paramName
+        };
     }
 
     private static string BuildConfig(string? spreadsheetId)
