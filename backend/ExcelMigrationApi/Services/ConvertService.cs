@@ -214,6 +214,10 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
             userMessage.AppendLine(request.VbaCode);
             userMessage.AppendLine("```");
 
+            var hasOpenEvent = request.DetectedEvents?.Any(e =>
+                e.VbaEventName.Equals("Workbook_Open", StringComparison.OrdinalIgnoreCase) ||
+                e.VbaEventName.Equals("Auto_Open", StringComparison.OrdinalIgnoreCase)) ?? false;
+
             if (request.ButtonContext != null && request.ButtonContext.Count > 0)
             {
                 userMessage.AppendLine();
@@ -234,14 +238,18 @@ And add a comment at the top: // Run setupTriggers() once to install event trigg
                 userMessage.AppendLine();
                 userMessage.AppendLine("Generate an onOpen() function that creates a custom menu with these buttons, grouped by sheet if they come from multiple sheets.");
 
-                var hasOpenEvent = request.DetectedEvents?.Any(e =>
-                    e.VbaEventName.Equals("Workbook_Open", StringComparison.OrdinalIgnoreCase) ||
-                    e.VbaEventName.Equals("Auto_Open", StringComparison.OrdinalIgnoreCase)) ?? false;
-
                 if (hasOpenEvent)
                 {
                     userMessage.AppendLine("IMPORTANT: This module already contains Workbook_Open/Auto_Open. Merge the menu creation INTO the converted onOpen() function — do NOT create a separate onOpen().");
                 }
+            }
+            else if (hasOpenEvent || request.ModuleName.Equals("ThisWorkbook", StringComparison.OrdinalIgnoreCase))
+            {
+                // No buttons but has open event or is ThisWorkbook — still generate onOpen with a basic menu
+                userMessage.AppendLine();
+                userMessage.AppendLine("IMPORTANT: Generate an onOpen() function that creates a custom menu listing the main functions in this module.");
+                userMessage.AppendLine("Use SpreadsheetApp.getUi().createMenu('ツール') to create the menu.");
+                userMessage.AppendLine("Add menu items for each major function using .addItem('機能名', 'functionName').");
             }
 
             var model = request.VbaCode.Split('\n').Length <= SmallModuleThreshold ? ModelSmall : ModelLarge;
