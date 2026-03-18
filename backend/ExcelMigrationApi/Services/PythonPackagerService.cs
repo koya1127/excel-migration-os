@@ -6,6 +6,8 @@ namespace ExcelMigrationApi.Services;
 
 public class PythonPackagerService
 {
+    private const string PythonEmbedPath = "/app/python-embed";
+
     public PythonPackage Package(string originalFileName, List<PythonConvertResult> results, string? spreadsheetId)
     {
         var baseName = Path.GetFileNameWithoutExtension(originalFileName);
@@ -48,34 +50,19 @@ public class PythonPackagerService
                 writer.Write(configContent);
             }
 
-            // requirements.txt
-            var reqEntry = archive.CreateEntry($"{safeName}_local/requirements.txt");
-            using (var writer = new StreamWriter(reqEntry.Open(), Encoding.UTF8))
+            // python-embed/ (bundled Python runtime for Windows)
+            if (Directory.Exists(PythonEmbedPath))
             {
-                writer.WriteLine("gspread>=5.0.0");
-                writer.WriteLine("google-auth>=2.0.0");
-                writer.WriteLine("openpyxl>=3.0.0");
+                AddDirectoryToZip(archive, PythonEmbedPath, $"{safeName}_local/python-embed");
             }
 
-            // setup.bat
-            var setupEntry = archive.CreateEntry($"{safeName}_local/setup.bat");
-            using (var writer = new StreamWriter(setupEntry.Open(), Encoding.UTF8))
-            {
-                writer.WriteLine("@echo off");
-                writer.WriteLine("echo セットアップを開始します...");
-                writer.WriteLine("pip install -r requirements.txt");
-                writer.WriteLine("echo.");
-                writer.WriteLine("echo セットアップが完了しました。");
-                writer.WriteLine("echo 「run.bat」をダブルクリックして実行してください。");
-                writer.WriteLine("pause");
-            }
-
-            // run.bat
+            // run.bat (uses embedded Python — no install required)
             var runEntry = archive.CreateEntry($"{safeName}_local/run.bat");
             using (var writer = new StreamWriter(runEntry.Open(), Encoding.UTF8))
             {
                 writer.WriteLine("@echo off");
-                writer.WriteLine("python main.py");
+                writer.WriteLine("chcp 65001 >nul 2>&1");
+                writer.WriteLine("\"%~dp0python-embed\\python.exe\" \"%~dp0main.py\"");
                 writer.WriteLine("pause");
             }
 
@@ -95,6 +82,18 @@ public class PythonPackagerService
             ModuleNames = results.Where(r => r.Status == "success").Select(r => r.ModuleName).ToList(),
             ReadmeContent = BuildReadme(baseName, results.Where(r => r.Status == "success").ToList(), spreadsheetId)
         };
+    }
+
+    private static void AddDirectoryToZip(ZipArchive archive, string sourceDir, string zipPrefix)
+    {
+        foreach (var filePath in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, filePath).Replace('\\', '/');
+            var entry = archive.CreateEntry($"{zipPrefix}/{relativePath}", CompressionLevel.Optimal);
+            using var entryStream = entry.Open();
+            using var fileStream = File.OpenRead(filePath);
+            fileStream.CopyTo(entryStream);
+        }
     }
 
     private static string BuildMainPy(string baseName, List<PythonConvertResult> results)
@@ -364,15 +363,12 @@ public class PythonPackagerService
         sb.AppendLine("このプログラムは、Excelマクロの機能をパソコン上で動かすためのものです。");
         sb.AppendLine("スプレッドシート（Google Sheets）では動かせなかった機能がここに含まれています。");
         sb.AppendLine();
-        sb.AppendLine("【初回セットアップ】");
-        sb.AppendLine("1. Pythonがインストールされていることを確認してください");
-        sb.AppendLine("   （https://www.python.org からダウンロード可能）");
-        sb.AppendLine("2. 「setup.bat」をダブルクリックしてください");
-        sb.AppendLine("   必要なライブラリが自動でインストールされます");
+        sb.AppendLine("【使い方】");
+        sb.AppendLine("1. このフォルダを好きな場所に置いてください");
+        sb.AppendLine("2. 「run.bat」をダブルクリックしてください");
+        sb.AppendLine("3. メニューが表示されるので、番号を入力して機能を選んでください");
         sb.AppendLine();
-        sb.AppendLine("【実行方法】");
-        sb.AppendLine("「run.bat」をダブルクリックしてください。");
-        sb.AppendLine("メニューが表示されるので、番号を入力して機能を選んでください。");
+        sb.AppendLine("※ Pythonのインストールは不要です（同梱済み）");
         sb.AppendLine();
 
         if (!string.IsNullOrEmpty(spreadsheetId))
@@ -391,8 +387,7 @@ public class PythonPackagerService
         }
         sb.AppendLine();
         sb.AppendLine("【困ったときは】");
-        sb.AppendLine("・「setup.bat」でエラーが出る → Pythonがインストールされていない可能性があります");
-        sb.AppendLine("・「run.bat」でエラーが出る → setup.batを先に実行してください");
+        sb.AppendLine("・「run.bat」でエラーが出る → フォルダ内の「python-embed」フォルダが存在するか確認してください");
         sb.AppendLine("・機能が正しく動かない → 元のExcelファイルで同じ操作を確認してみてください");
         sb.AppendLine();
         sb.AppendLine("========================================");
