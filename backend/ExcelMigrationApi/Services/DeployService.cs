@@ -620,6 +620,7 @@ public class DeployService
 
             if (excludedFiles.Count > 0)
             {
+                report.ExcludedFiles = excludedFiles;
                 report.Error = $"{excludedFiles.Count} ファイルを構文エラーのため除外: {string.Join(", ", excludedFiles)}";
             }
 

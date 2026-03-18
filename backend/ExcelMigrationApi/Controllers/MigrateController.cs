@@ -346,8 +346,12 @@ public class MigrateController : ControllerBase
                 deployReport.WebViewLink = uploadResult.WebViewLink;
                 migrateReport.Deploys.Add(deployReport);
 
-                // Add usage sheet to the spreadsheet
-                var usageSheet = DeployService.BuildUsageSheet(group.Key, group);
+                // Add usage sheet — filter out excluded files so menu items match deployed code
+                var excludedSet = new HashSet<string>(
+                    deployReport.ExcludedFiles.Select(f => Path.GetFileNameWithoutExtension(f)),
+                    StringComparer.OrdinalIgnoreCase);
+                var deployedResults = group.Where(r => !excludedSet.Contains(r.ModuleName));
+                var usageSheet = DeployService.BuildUsageSheet(group.Key, deployedResults);
                 await _deployService.AddUsageSheet(uploadResult.DriveFileId, usageSheet, googleToken);
             }
 

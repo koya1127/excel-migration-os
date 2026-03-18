@@ -46,6 +46,7 @@ public class DeployReport
     public string ScriptId { get; set; } = string.Empty;
     public int FileCount { get; set; }
     public List<string> FilesDeployed { get; set; } = new();
+    public List<string> ExcludedFiles { get; set; } = new();
     public string Status { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
 }
