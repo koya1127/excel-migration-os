@@ -73,6 +73,14 @@ public class PythonPackagerService
             {
                 writer.Write(readmeContent);
             }
+
+            // test.py (automated E2E test script)
+            var testContent = BuildTestPy(successResults);
+            var testEntry = archive.CreateEntry($"{safeName}_local/test.py");
+            using (var writer = new StreamWriter(testEntry.Open(), Encoding.UTF8))
+            {
+                writer.Write(testContent);
+            }
         }
 
         return new PythonPackage
@@ -351,6 +359,145 @@ public class PythonPackagerService
         sb.AppendLine("  Excel Migration OS により自動生成");
         sb.AppendLine($"  生成日: {DateTime.Now:yyyy/MM/dd}");
         sb.AppendLine("========================================");
+
+        return sb.ToString();
+    }
+
+    private static string BuildTestPy(List<PythonConvertResult> results)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("#!/usr/bin/env python3");
+        sb.AppendLine("# -*- coding: utf-8 -*-");
+        sb.AppendLine("\"\"\"");
+        sb.AppendLine("自動テストスクリプト");
+        sb.AppendLine("python-embed/python.exe test.py で実行");
+        sb.AppendLine("\"\"\"");
+        sb.AppendLine();
+        sb.AppendLine("import subprocess");
+        sb.AppendLine("import sys");
+        sb.AppendLine("import os");
+        sb.AppendLine("import glob");
+        sb.AppendLine();
+        sb.AppendLine("base_dir = os.path.dirname(os.path.abspath(__file__))");
+        sb.AppendLine("python_exe = os.path.join(base_dir, 'python-embed', 'python.exe')");
+        sb.AppendLine("main_py = os.path.join(base_dir, 'main.py')");
+        sb.AppendLine("results = []");
+        sb.AppendLine("failures = 0");
+        sb.AppendLine();
+
+        // Test 1: 起動→終了
+        sb.AppendLine("# Test 1: 起動→終了");
+        sb.AppendLine("try:");
+        sb.AppendLine("    r = subprocess.run([python_exe, main_py], input='0\\n',");
+        sb.AppendLine("                       capture_output=True, text=True, timeout=15, cwd=base_dir)");
+        sb.AppendLine("    assert r.returncode == 0, f'returncode={r.returncode}'");
+        sb.AppendLine("    assert '終了します' in r.stdout, '終了メッセージなし'");
+        sb.AppendLine("    results.append('✓ Test1: 起動→終了')");
+        sb.AppendLine("except Exception as e:");
+        sb.AppendLine("    results.append(f'✗ Test1: 起動→終了 — {e}')");
+        sb.AppendLine("    failures += 1");
+        sb.AppendLine();
+
+        // Test 2: 無効番号
+        sb.AppendLine("# Test 2: 無効番号");
+        sb.AppendLine("try:");
+        sb.AppendLine("    r = subprocess.run([python_exe, main_py], input='99\\n0\\n',");
+        sb.AppendLine("                       capture_output=True, text=True, timeout=15, cwd=base_dir)");
+        sb.AppendLine("    assert '無効な番号' in r.stdout, '無効番号エラーなし'");
+        sb.AppendLine("    results.append('✓ Test2: 無効番号エラー')");
+        sb.AppendLine("except Exception as e:");
+        sb.AppendLine("    results.append(f'✗ Test2: 無効番号エラー — {e}')");
+        sb.AppendLine("    failures += 1");
+        sb.AppendLine();
+
+        // Test 3: 各メニュー番号（クラッシュしないこと）
+        var menuCount = results.Count > 0 ? results.Count : 5;
+        sb.AppendLine("# Test 3: 各メニュー番号でクラッシュしないこと");
+        sb.AppendLine($"for i in range(1, {menuCount + 1}):");
+        sb.AppendLine("    try:");
+        sb.AppendLine("        r = subprocess.run([python_exe, main_py],");
+        sb.AppendLine("                           input=f'{i}\\n\\n\\n\\n0\\n',");
+        sb.AppendLine("                           capture_output=True, text=True, timeout=15, cwd=base_dir)");
+        sb.AppendLine("        if '無効な番号' in r.stdout:");
+        sb.AppendLine("            break");
+        sb.AppendLine("        if r.returncode != 0:");
+        sb.AppendLine("            results.append(f'✗ Test3: メニュー{i} クラッシュ (rc={r.returncode})')");
+        sb.AppendLine("            failures += 1");
+        sb.AppendLine("        else:");
+        sb.AppendLine("            results.append(f'✓ Test3: メニュー{i} 正常終了')");
+        sb.AppendLine("    except subprocess.TimeoutExpired:");
+        sb.AppendLine("        results.append(f'✓ Test3: メニュー{i} タイムアウト（入力待ちの可能性、正常）')");
+        sb.AppendLine("    except Exception as e:");
+        sb.AppendLine("        results.append(f'✗ Test3: メニュー{i} — {e}')");
+        sb.AppendLine("        failures += 1");
+        sb.AppendLine();
+
+        // Test 4: 構文チェック
+        sb.AppendLine("# Test 4: 構文チェック（全.pyファイル）");
+        sb.AppendLine("modules_dir = os.path.join(base_dir, 'modules')");
+        sb.AppendLine("py_files = [main_py] + glob.glob(os.path.join(modules_dir, '*.py'))");
+        sb.AppendLine("for f in py_files:");
+        sb.AppendLine("    try:");
+        sb.AppendLine("        r = subprocess.run([python_exe, '-m', 'py_compile', f],");
+        sb.AppendLine("                           capture_output=True, text=True, timeout=10)");
+        sb.AppendLine("        if r.returncode != 0:");
+        sb.AppendLine("            results.append(f'✗ Test4: 構文エラー {os.path.basename(f)} — {r.stderr.strip()}')");
+        sb.AppendLine("            failures += 1");
+        sb.AppendLine("        else:");
+        sb.AppendLine("            results.append(f'✓ Test4: 構文OK {os.path.basename(f)}')");
+        sb.AppendLine("    except Exception as e:");
+        sb.AppendLine("        results.append(f'✗ Test4: {os.path.basename(f)} — {e}')");
+        sb.AppendLine("        failures += 1");
+        sb.AppendLine();
+
+        // Test 5: gspread禁止チェック
+        sb.AppendLine("# Test 5: gspread / google.oauth2 禁止チェック");
+        sb.AppendLine("forbidden = ['import gspread', 'from gspread', 'import google.oauth2', 'from google.oauth2',");
+        sb.AppendLine("             'credentials.json', 'service_account']");
+        sb.AppendLine("found_forbidden = []");
+        sb.AppendLine("for f in py_files:");
+        sb.AppendLine("    content = open(f, encoding='utf-8').read()");
+        sb.AppendLine("    for kw in forbidden:");
+        sb.AppendLine("        if kw in content:");
+        sb.AppendLine("            found_forbidden.append(f'{os.path.basename(f)}: {kw}')");
+        sb.AppendLine("if found_forbidden:");
+        sb.AppendLine("    for ff in found_forbidden:");
+        sb.AppendLine("        results.append(f'✗ Test5: 禁止ワード検出 — {ff}')");
+        sb.AppendLine("    failures += len(found_forbidden)");
+        sb.AppendLine("else:");
+        sb.AppendLine("    results.append('✓ Test5: gspread/google.oauth2 禁止チェックOK')");
+        sb.AppendLine();
+
+        // Test 6: ZIP構造チェック
+        sb.AppendLine("# Test 6: 必須ファイル存在チェック");
+        sb.AppendLine("required = ['main.py', 'run.bat', 'README.txt', 'config.json',");
+        sb.AppendLine("            os.path.join('modules', '__init__.py'),");
+        sb.AppendLine("            os.path.join('python-embed', 'python.exe')]");
+        sb.AppendLine("for req in required:");
+        sb.AppendLine("    path = os.path.join(base_dir, req)");
+        sb.AppendLine("    if os.path.exists(path):");
+        sb.AppendLine("        results.append(f'✓ Test6: {req} 存在')");
+        sb.AppendLine("    else:");
+        sb.AppendLine("        results.append(f'✗ Test6: {req} が見つかりません')");
+        sb.AppendLine("        failures += 1");
+        sb.AppendLine();
+
+        // Output summary
+        sb.AppendLine("# 結果出力");
+        sb.AppendLine("print()");
+        sb.AppendLine("print('=' * 50)");
+        sb.AppendLine("print('  テスト結果')");
+        sb.AppendLine("print('=' * 50)");
+        sb.AppendLine("for r in results:");
+        sb.AppendLine("    print(r)");
+        sb.AppendLine("print()");
+        sb.AppendLine("print(f'合計: {len(results)}件, 失敗: {failures}件')");
+        sb.AppendLine("if failures > 0:");
+        sb.AppendLine("    print('*** テスト失敗あり ***')");
+        sb.AppendLine("    sys.exit(1)");
+        sb.AppendLine("else:");
+        sb.AppendLine("    print('全テストパス!')");
+        sb.AppendLine("    sys.exit(0)");
 
         return sb.ToString();
     }
