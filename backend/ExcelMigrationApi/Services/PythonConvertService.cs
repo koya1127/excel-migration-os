@@ -17,27 +17,35 @@ public class PythonConvertService
     private const int MaxConcurrency = 5;
     private static readonly SemaphoreSlim _concurrencySemaphore = new(MaxConcurrency);
 
-    private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to Python.
-Convert the following VBA module to equivalent Python code.
+    private const string SystemPrompt = @"You are a specialist in converting Excel VBA macros to standalone local Python.
+Convert the following VBA module to Python code that runs 100% locally — NO internet, NO Google Sheets, NO cloud APIs.
 
-## Libraries to use
-- gspread + google.oauth2.service_account: Google Sheets read/write
-- win32com.client: COM automation (Excel, Outlook, Word, etc.)
+## Design Principle
+This Python code is the ""local version"" for VBA features that cannot run in Google Sheets (GAS).
+It must work offline on a Windows PC with zero setup beyond double-clicking run.bat.
+
+## Libraries to use (standard library + bundled only)
 - os, shutil, subprocess: File I/O, shell execution
-- openpyxl: Local Excel file manipulation
 - csv: CSV read/write
 - glob: File pattern matching
 - re: Regular expressions
+- openpyxl: Local Excel file read/write
+- unicodedata: Character normalization
+- json: Config/data files
+
+## FORBIDDEN — do NOT use these
+- gspread (no Google Sheets)
+- google.oauth2, google-auth (no Google APIs)
+- win32com.client (not cross-platform)
+- Any library requiring internet access
 
 ## VBA → Python Mapping
 
 | VBA | Python |
 |---|---|
-| Range(""A1"").Value | worksheet.acell(""A1"").value |
-| Cells(row, col).Value | worksheet.cell(row, col).value |
-| Range(""A1:B10"").Value | worksheet.get(""A1:B10"") |
-| Sheets(""name"") | workbook.worksheet(""name"") |
-| ActiveSheet | workbook.sheet1 (or specify) |
+| Range(""A1"").Value / Cells(row, col) | Use openpyxl: ws.cell(row, col).value or use csv/dict |
+| Sheets(""name"") | openpyxl: wb[""name""] or use separate CSV files |
+| ActiveSheet | (specify sheet by name) |
 | ThisWorkbook.Path | os.path.dirname(os.path.abspath(__file__)) |
 | Dir(path) | glob.glob(path) or os.listdir(folder) |
 | FileCopy src, dst | shutil.copy2(src, dst) |
@@ -49,7 +57,6 @@ Convert the following VBA module to equivalent Python code.
 | Line Input #1, var | var = f.readline().strip() |
 | Close #1 | (automatic with 'with' statement) |
 | Shell cmd | subprocess.run(cmd, shell=True) |
-| CreateObject(""Outlook.Application"") | win32com.client.Dispatch(""Outlook.Application"") |
 | CreateObject(""Scripting.FileSystemObject"") | (use os/shutil directly) |
 | MsgBox text | print(text) |
 | InputBox prompt | input(prompt) |
@@ -61,18 +68,13 @@ Convert the following VBA module to equivalent Python code.
 | StrConv(s, vbNarrow) | unicodedata.normalize('NFKC', s) |
 | ASC(char) | (use unicodedata.normalize) |
 
-## Google Sheets Integration
-When the VBA code reads/writes to worksheets, use gspread:
-```python
-import gspread
-from google.oauth2.service_account import Credentials
-
-def get_spreadsheet():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets']
-    creds = Credentials.from_service_account_file('credentials.json', scopes=scopes)
-    gc = gspread.authorize(creds)
-    return gc.open_by_key(SPREADSHEET_ID)
-```
+## Worksheet Data Handling
+When VBA reads/writes worksheet data, convert to LOCAL file operations:
+- Worksheet data → CSV files in a ""data/"" subfolder
+- Reading a range → csv.reader or openpyxl
+- Writing results → csv.writer or print to console
+- Search results → print to console or save to output CSV
+- Example: Instead of worksheet.acell(""A1"").value, read from a local CSV
 
 ## Output Rules
 - Use Python 3.10+ syntax
@@ -83,7 +85,8 @@ def get_spreadsheet():
 - If a VBA function can't be fully converted, add a # TODO comment in Japanese
 - CRITICAL: All TODO comments MUST be in Japanese
 - Each module should be a standalone .py file with functions
-- Do NOT include if __name__ == '__main__' block (main.py handles entry)";
+- Do NOT include if __name__ == '__main__' block (main.py handles entry)
+- Do NOT import gspread or google.oauth2 under any circumstances";
 
     public PythonConvertService(IConfiguration config, ILogger<PythonConvertService> logger, IHttpClientFactory httpClientFactory)
     {

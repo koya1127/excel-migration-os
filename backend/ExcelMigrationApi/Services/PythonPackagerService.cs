@@ -152,42 +152,7 @@ public class PythonPackagerService
             }
         }
 
-        // Check if any function needs workbook → add helper
-        var needsWorkbook = menuItems.Any(mi => mi.Params.Any(p => IsWorkbookParam(p)));
-        if (needsWorkbook)
-        {
-            sb.AppendLine("_workbook_cache = None");
-            sb.AppendLine();
-            sb.AppendLine("def get_workbook():");
-            sb.AppendLine("    global _workbook_cache");
-            sb.AppendLine("    if _workbook_cache is not None:");
-            sb.AppendLine("        return _workbook_cache");
-            sb.AppendLine("    # 各モジュールのget_spreadsheet()を探す");
-            sb.AppendLine("    for mod_name in dir():");
-            sb.AppendLine("        pass");
-            // Directly call the first module's get_spreadsheet
-            var firstModWithSpreadsheet = results.FirstOrDefault(r =>
-                !string.IsNullOrEmpty(r.PythonCode) && r.PythonCode.Contains("def get_spreadsheet("));
-            if (firstModWithSpreadsheet != null)
-            {
-                var modName = MakeSafeName(firstModWithSpreadsheet.ModuleName).ToLowerInvariant();
-                sb.AppendLine($"    _workbook_cache = {modName}.get_spreadsheet()");
-            }
-            else
-            {
-                sb.AppendLine("    import gspread");
-                sb.AppendLine("    from google.oauth2.service_account import Credentials");
-                sb.AppendLine("    with open('config.json', 'r') as f:");
-                sb.AppendLine("        config = json.load(f)");
-                sb.AppendLine("    scopes = ['https://www.googleapis.com/auth/spreadsheets']");
-                sb.AppendLine("    creds = Credentials.from_service_account_file(config['credentials_file'], scopes=scopes)");
-                sb.AppendLine("    gc = gspread.authorize(creds)");
-                sb.AppendLine("    _workbook_cache = gc.open_by_key(config['spreadsheet_id'])");
-            }
-            sb.AppendLine("    return _workbook_cache");
-            sb.AppendLine();
-            sb.AppendLine();
-        }
+        // Note: gspread/workbook helpers removed — Python local version runs 100% offline
 
         sb.AppendLine("def main():");
         sb.AppendLine("    print(\"=\" * 50)");
@@ -345,8 +310,7 @@ public class PythonPackagerService
     {
         var sb = new StringBuilder();
         sb.AppendLine("{");
-        sb.AppendLine($"  \"spreadsheet_id\": \"{spreadsheetId ?? "ここにGoogle SpreadsheetのIDを入力"}\",");
-        sb.AppendLine("  \"credentials_file\": \"credentials.json\"");
+        sb.AppendLine("  \"data_dir\": \"data\"");
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -371,14 +335,7 @@ public class PythonPackagerService
         sb.AppendLine("※ Pythonのインストールは不要です（同梱済み）");
         sb.AppendLine();
 
-        if (!string.IsNullOrEmpty(spreadsheetId))
-        {
-            sb.AppendLine("【Google Sheetsとの連携】");
-            sb.AppendLine("このプログラムはGoogle Sheetsのデータを読み書きできます。");
-            sb.AppendLine($"連携先: https://docs.google.com/spreadsheets/d/{spreadsheetId}");
-            sb.AppendLine("※ 初回はGoogleのサービスアカウント認証ファイル（credentials.json）が必要です。");
-            sb.AppendLine();
-        }
+        // No Google Sheets connection — this runs 100% locally
 
         sb.AppendLine("【含まれている機能】");
         foreach (var result in results)
