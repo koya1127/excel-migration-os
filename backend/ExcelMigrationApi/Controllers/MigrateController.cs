@@ -233,14 +233,17 @@ public class MigrateController : ControllerBase
             }
             migrateReport.Convert = convertReport;
 
-            // Python conversion (Track 2)
+            // Python conversion (Track 2, or all modules in "both"/"local_only" mode)
             PythonConvertReport? pythonReport = null;
-            if (runPython && trackResult.Track2Modules.Count > 0)
+            var pythonModules = trackMode is "both" or "local_only"
+                ? validModules // all modules go to Python
+                : trackResult.Track2Modules; // auto: only Track 2
+            if (runPython && pythonModules.Count > 0)
             {
                 var spreadsheetId = uploadReport.Files
                     .FirstOrDefault(f => f.Status == "success")?.DriveFileId;
 
-                var pythonRequests = trackResult.Track2Modules.Select(m => new PythonConvertRequest
+                var pythonRequests = pythonModules.Select(m => new PythonConvertRequest
                 {
                     VbaCode = m.Code,
                     ModuleName = m.ModuleName,
