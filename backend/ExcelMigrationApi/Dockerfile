@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
 # Enable import site + add site-packages path
 RUN sed -i 's/#import site/import site/' python-embed/python312._pth \
     && echo "Lib/site-packages" >> python-embed/python312._pth
-# Download and extract Python packages (pure Python wheels)
-RUN pip download gspread google-auth openpyxl -d /prep/wheels --no-cache-dir \
+# Download Windows-compatible wheel files
+RUN pip download --platform win_amd64 --python-version 312 --only-binary :all: \
+    gspread google-auth openpyxl -d /prep/wheels --no-cache-dir \
     && mkdir -p python-embed/Lib/site-packages \
     && for whl in /prep/wheels/*.whl; do unzip -o "$whl" -d python-embed/Lib/site-packages/; done \
     && rm -rf /prep/wheels
