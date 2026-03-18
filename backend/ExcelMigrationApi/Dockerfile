@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
     && rm python-3.12.8-embed-amd64.zip
 # Enable import site + add site-packages path
 RUN sed -i 's/#import site/import site/' python-embed/python312._pth \
-    && echo "Lib/site-packages" >> python-embed/python312._pth
+    && echo "Lib/site-packages" >> python-embed/python312._pth \
+    && echo ".." >> python-embed/python312._pth
 # Download Windows-compatible wheel files
 RUN pip download --platform win_amd64 --python-version 312 --only-binary :all: \
     gspread google-auth openpyxl -d /prep/wheels --no-cache-dir \
